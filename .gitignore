@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+.claude-workspace/
+tasks/

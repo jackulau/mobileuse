@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobile-use"
+version = "0.1.0"
+description = "Direct mobile device control via Appium — iOS (XCUITest) and Android (UIAutomator2). The simplest harness to put an LLM agent on a real phone."
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "jackulau"}]
+keywords = ["appium", "ios", "android", "automation", "agent", "llm", "mobile"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "Appium-Python-Client>=5.3.1",
+    "selenium>=4.30",
+    "pillow>=10",
+    'pyobjc-framework-Vision>=10 ; sys_platform == "darwin"',
+]
+
+[project.urls]
+Homepage = "https://github.com/jackulau/mobile_use"
+Repository = "https://github.com/jackulau/mobile_use"
+Issues = "https://github.com/jackulau/mobile_use/issues"
+
+[project.scripts]
+mobile-use = "mobile_use.cli:main"
+iphone-harness = "iphone_harness.run:main"
+android-harness = "android_harness.run:main"
+
+[tool.setuptools.packages.find]
+include = ["mobile_use*", "iphone_harness*", "android_harness*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
