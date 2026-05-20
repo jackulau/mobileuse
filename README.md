@@ -193,6 +193,60 @@ Domain skills live in `agent-workspace/domain-skills/<bundleId-or-package>/`. Se
 | iOS | Settings | [`auto-lock.md`](agent-workspace/domain-skills/com.apple.Preferences/auto-lock.md) |
 | iOS | X (Twitter) | [`post.md`](agent-workspace/domain-skills/com.atebits.Tweetie2/post.md) |
 
+## Cleaning up and organizing the phone
+
+Bundled skills + helpers for the most common "the phone is full / messy" tasks
+on both platforms. Capability matrix and gap analysis:
+[`docs/cleanup-capability.md`](docs/cleanup-capability.md).
+
+### Shared helpers (auto-loaded into `iphone-harness -c` and `android-harness -c`)
+
+| Helper | What |
+|---|---|
+| `list_installed_apps()` | iOS: scrapes Settings → iPhone Storage. Android: `pm list packages -3` with Settings fallback. |
+| `uninstall_app(id_or_label)` | Dispatches to platform-specific uninstall. Returns `{ok, action, reason}`. |
+| `storage_summary()` | Used / Free / Total. Display strings — parse if needed. |
+| `bulk_select(items, deletion_button="Delete")` | Generic Select-mode → tap-each → Delete pattern. |
+| `confirm_destructive(label="Delete", timeout=4.0)` | Waits for the confirmation alert and taps it. |
+
+### Cleanup + organize domain skills
+
+| Platform | App | Skill |
+|---|---|---|
+| iOS | SpringBoard | [`uninstall-app.md`](agent-workspace/domain-skills/com.apple.springboard/uninstall-app.md), [`organize-home-screen.md`](agent-workspace/domain-skills/com.apple.springboard/organize-home-screen.md), [`app-library.md`](agent-workspace/domain-skills/com.apple.springboard/app-library.md) |
+| iOS | Settings | [`iphone-storage.md`](agent-workspace/domain-skills/com.apple.Preferences/iphone-storage.md), [`clear-safari-data.md`](agent-workspace/domain-skills/com.apple.Preferences/clear-safari-data.md), [`screen-time-limits.md`](agent-workspace/domain-skills/com.apple.Preferences/screen-time-limits.md) |
+| iOS | Photos | [`bulk-delete-photos.md`](agent-workspace/domain-skills/com.apple.mobileslideshow/bulk-delete-photos.md), [`empty-recently-deleted.md`](agent-workspace/domain-skills/com.apple.mobileslideshow/empty-recently-deleted.md), [`delete-by-album.md`](agent-workspace/domain-skills/com.apple.mobileslideshow/delete-by-album.md) |
+| iOS | Files | [`browse-and-delete.md`](agent-workspace/domain-skills/com.apple.DocumentsApp/browse-and-delete.md), [`empty-downloads.md`](agent-workspace/domain-skills/com.apple.DocumentsApp/empty-downloads.md), [`empty-files-recently-deleted.md`](agent-workspace/domain-skills/com.apple.DocumentsApp/empty-files-recently-deleted.md) |
+| Android | Settings | [`uninstall-app.md`](agent-workspace/domain-skills/com.android.settings/uninstall-app.md), [`storage-cleanup.md`](agent-workspace/domain-skills/com.android.settings/storage-cleanup.md), [`clear-app-cache.md`](agent-workspace/domain-skills/com.android.settings/clear-app-cache.md) |
+| Android | Pixel Launcher | [`long-press-uninstall.md`](agent-workspace/domain-skills/com.google.android.apps.nexuslauncher/long-press-uninstall.md), [`organize-home-screen.md`](agent-workspace/domain-skills/com.google.android.apps.nexuslauncher/organize-home-screen.md), [`app-drawer.md`](agent-workspace/domain-skills/com.google.android.apps.nexuslauncher/app-drawer.md) |
+| Android | Files by Google | [`cleanup.md`](agent-workspace/domain-skills/com.google.android.apps.nbu.files/cleanup.md) |
+| Android | Google Photos | [`bulk-delete.md`](agent-workspace/domain-skills/com.google.android.apps.photos/bulk-delete.md), [`empty-bin.md`](agent-workspace/domain-skills/com.google.android.apps.photos/empty-bin.md) |
+
+### Runnable demos
+
+```bash
+# iOS — inventory + folder organize + uninstall a test app + empty Photos bin
+python3 docs/demos/clean-and-organize-ios.py
+
+# Preview only (no destructive ops)
+DRY_RUN=1 python3 docs/demos/clean-and-organize-ios.py
+
+# Android equivalent — opt in to uninstall by setting TEST_PACKAGE
+python3 docs/demos/clean-and-organize-android.py
+TEST_PACKAGE=com.example.junkapp python3 docs/demos/clean-and-organize-android.py
+```
+
+### Tests
+
+```bash
+python3 -m pytest tests/test_cleanup_skills.py -x
+```
+
+No device required — tests read skill files and the helpers module from disk.
+Out-of-scope (documented, not implemented): rooting/jailbreak, bypassing
+Screen Time PIN, cloud-side deletes, OEM-launcher-specific recipes outside
+Pixel/AOSP. See [`docs/cleanup-capability.md`](docs/cleanup-capability.md).
+
 ## Architecture
 
 Two parallel harnesses sharing the same Appium server:
