@@ -16,31 +16,46 @@ A thin, editable harness for putting LLM agents on real phones. The agent percei
   message sent — works on iPhone and Android
 ```
 
-## Setup
+## Quickstart
 
-See [`SETUP.md`](SETUP.md) for full setup. Quick start:
-
-### iOS
+Three commands, in order. Each one is idempotent — re-running is safe.
 
 ```bash
-brew install libimobiledevice
-npm i -g appium && appium driver install xcuitest
-pip install -e .
-cp .env.example .env  # fill in IPH_UDID, IPH_XCODE_ORG_ID, IPH_WDA_BUNDLE_ID
+git clone https://github.com/jackulau/mobile_use.git && cd mobile_use
+pip install -e .                  # installs the mobile-use / iphone-harness / android-harness CLIs
+mobile-use bootstrap              # installs Appium + xcuitest + uiautomator2 + brew/node deps
+mobile-use init                   # auto-detects connected device, writes .env (prompts for Apple Team ID on iOS)
+mobile-use quickstart             # doctor + smoke test — prints "ready" or the first thing to fix
 ```
 
-Plug in iPhone, unlock, trust the computer, trust the WDA developer profile.
+`mobile-use bootstrap` accepts `--dry-run` (preview only), `--ios-only`, `--android-only`.
+`mobile-use init` accepts `--yes` (non-interactive — defaults for everything).
+`mobile-use quickstart` auto-detects platform when one device is paired; pass `--ios` / `--android` to disambiguate.
 
-### Android
+If anything fails:
 
 ```bash
-brew install android-platform-tools
-npm i -g appium && appium driver install uiautomator2
-pip install -e .
-cp .env.example .env  # fill in ANH_UDID
+mobile-use --doctor               # numbered checks with one-line remediations
+iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
 ```
 
-Connect Android device, enable USB debugging, authorize the computer.
+See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, or skip to the
+sections below for usage.
+
+### Manual setup (skip if `mobile-use bootstrap` worked)
+
+```bash
+brew install libimobiledevice ideviceinstaller android-platform-tools node
+npm i -g appium
+appium driver install xcuitest          # iOS only
+appium driver install uiautomator2      # Android only
+pip install -e .
+cp .env.example .env                    # fill in IPH_UDID / IPH_XCODE_ORG_ID / IPH_WDA_BUNDLE_ID and/or ANH_UDID
+```
+
+Plug in iPhone — Trust This Computer, Settings → Privacy & Security → Developer Mode → On,
+trust the WDA developer profile.
+Plug in Android — enable USB Debugging, tap Allow on this computer.
 
 ### PATH note
 
