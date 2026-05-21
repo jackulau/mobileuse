@@ -128,6 +128,11 @@ def _doctor_both():
 
 HELP = """mobile-use — direct mobile device control via Appium
 
+Quickstart (first run):
+  mobile-use bootstrap                 install Appium + driver + system deps
+  mobile-use init                      write .env from connected device
+  mobile-use quickstart                doctor + smoke test (proves it works)
+
 Usage:
   mobile-use --ios -c '<python>'       run iOS script (iphone-harness)
   mobile-use --android -c '<python>'   run Android script (android-harness)
@@ -198,6 +203,19 @@ def main():
     # Doctor with no platform → run both
     if remaining and remaining[0] == "--doctor" and platform is None:
         sys.exit(_doctor_both())
+
+    # New UX subcommands (no platform required)
+    if remaining and remaining[0] == "bootstrap":
+        from . import bootstrap
+        sys.exit(bootstrap.main(remaining[1:]))
+
+    if remaining and remaining[0] == "init":
+        from . import setup_env
+        sys.exit(setup_env.main(remaining[1:]))
+
+    if remaining and remaining[0] == "quickstart":
+        from . import quickstart
+        sys.exit(quickstart.main(remaining[1:], platform=platform))
 
     # Training data commands
     if remaining and remaining[0] == "export-training":
