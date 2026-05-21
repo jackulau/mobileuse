@@ -69,6 +69,8 @@ def _drop_conn():
 
 
 def _send(req, timeout=120.0, _retries=None):
+    """Send a JSON-line RPC to the daemon. On unreachable/stale errors, wraps
+    with a 3-line remediation pointing at `--doctor` and `--reload`."""
     if _retries is None:
         _retries = MAX_RETRIES
     try:
@@ -82,7 +84,12 @@ def _send(req, timeout=120.0, _retries=None):
             from .admin import ensure_daemon
             ensure_daemon()
             return _send(req, timeout=timeout, _retries=_retries - 1)
-        raise RuntimeError(f"daemon unreachable after retries: {e}")
+        raise RuntimeError(
+            f"iphone-harness daemon unreachable after {MAX_RETRIES} retries.\n"
+            f"  Underlying error: {e}\n"
+            f"  Likely causes: Appium not running, IPH_UDID unset/wrong, WDA not trusted on device.\n"
+            f"  Run `iphone-harness --doctor` to diagnose, then `iphone-harness --reload`."
+        )
     if isinstance(r, dict) and "error" in r:
         err = r["error"]
         if "stale" in err.lower() or "session" in err.lower():
@@ -90,6 +97,12 @@ def _send(req, timeout=120.0, _retries=None):
             if _retries > 0:
                 time.sleep(RETRY_DELAY * (2 ** (MAX_RETRIES - _retries)))
                 return _send(req, timeout=timeout, _retries=_retries - 1)
+            raise RuntimeError(
+                f"iphone-harness session went stale (Appium/XCUITest dropped).\n"
+                f"  Server said: {err}\n"
+                f"  Fix: `iphone-harness --reload` (restarts daemon + Appium session). "
+                f"If repeating, run `iphone-harness --doctor`."
+            )
         raise RuntimeError(err)
     return r
 
