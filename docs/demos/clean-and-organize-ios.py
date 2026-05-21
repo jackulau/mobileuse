@@ -184,28 +184,60 @@ def step_empty_recently_deleted():
 
 
 def main():
+    import argparse
+    p = argparse.ArgumentParser(prog="clean-and-organize-ios",
+                                description="Clean+organize an iPhone via mobile_use.")
+    p.add_argument("--check", action="store_true",
+                   help="Preflight only: report whether the harness path is ready, then exit.")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Run inventory + screenshots only (no destructive ops). Equivalent to DRY_RUN=1.")
+    args = p.parse_args()
+
     ok, why = _harness_available()
-    dry = os.environ.get("DRY_RUN") == "1"
+    dry = args.dry_run or (os.environ.get("DRY_RUN") == "1")
     app = os.environ.get("TEST_APP", "Chess")
 
     print(f"clean-and-organize-ios demo  (DRY_RUN={dry}, TEST_APP={app!r})")
+
+    if args.check:
+        if ok:
+            print("\n[check] harness path OK — connected, CLI on PATH, .env loaded.")
+            return 0
+        print(f"\n[check] FAIL: {why}")
+        print("  Fix:  mobile-use bootstrap   (installs CLIs + deps)")
+        print("        mobile-use init        (auto-fills .env from connected device)")
+        print("        mobile-use --doctor    (full diagnostic)")
+        return 2
+
     if not ok:
         print(f"\n[skip] {why}")
-        print("This demo needs a real iPhone. To preview the script, set DRY_RUN=1 in a")
-        print("connected-device session.")
-        return 0
+        print("This demo needs a real iPhone. Setup in three commands:")
+        print("  mobile-use bootstrap   (installs Appium + xcuitest + deps)")
+        print("  mobile-use init        (writes .env from connected device)")
+        print("  mobile-use quickstart  (verifies the whole chain)")
+        print("Or DRY_RUN=1 + a connected device to preview safely.")
+        return 2
 
-    step_inventory()
-    step_home_snapshot("before")
+    try:
+        step_inventory()
+        step_home_snapshot("before")
 
-    if dry:
-        print("\nDRY_RUN=1 — skipping destructive steps.")
-        return 0
+        if dry:
+            print("\nDRY_RUN=1 — skipping destructive steps.")
+            return 0
 
-    step_organize_folder()
-    step_uninstall(app)
-    step_empty_recently_deleted()
-    step_home_snapshot("after")
+        step_organize_folder()
+        step_uninstall(app)
+        step_empty_recently_deleted()
+        step_home_snapshot("after")
+    except SystemExit:
+        # Already had a tail message from _run.
+        print("\n[hint] Diagnose with: iphone-harness --doctor")
+        raise
+    except Exception as e:
+        print(f"\n[fail] {type(e).__name__}: {e}")
+        print("[hint] Diagnose with: iphone-harness --doctor")
+        return 1
 
     print("\ndone. compare /tmp/ios-home-before.png and /tmp/ios-home-after.png")
     return 0

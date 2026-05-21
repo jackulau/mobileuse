@@ -186,28 +186,59 @@ def step_empty_photos_bin():
 
 
 def main():
+    import argparse
+    p = argparse.ArgumentParser(prog="clean-and-organize-android",
+                                description="Clean+organize an Android via mobile_use.")
+    p.add_argument("--check", action="store_true",
+                   help="Preflight only: report whether the harness path is ready, then exit.")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Run inventory + screenshots only (no destructive ops). Equivalent to DRY_RUN=1.")
+    args = p.parse_args()
+
     ok, why = _harness_available()
-    dry = os.environ.get("DRY_RUN") == "1"
+    dry = args.dry_run or (os.environ.get("DRY_RUN") == "1")
     pkg = os.environ.get("TEST_PACKAGE", "")
 
     print(f"clean-and-organize-android demo  (DRY_RUN={dry}, TEST_PACKAGE={pkg or '<none>'})")
+
+    if args.check:
+        if ok:
+            print("\n[check] harness path OK — connected, CLI on PATH, .env loaded.")
+            return 0
+        print(f"\n[check] FAIL: {why}")
+        print("  Fix:  mobile-use bootstrap   (installs CLIs + deps)")
+        print("        mobile-use init        (auto-fills .env from connected device)")
+        print("        mobile-use --doctor    (full diagnostic)")
+        return 2
+
     if not ok:
         print(f"\n[skip] {why}")
-        print("This demo needs a real Android device. To preview, set DRY_RUN=1 in a")
-        print("connected-device session.")
-        return 0
+        print("This demo needs a real Android device. Setup in three commands:")
+        print("  mobile-use bootstrap   (installs Appium + uiautomator2 + deps)")
+        print("  mobile-use init        (writes .env from connected device)")
+        print("  mobile-use quickstart  (verifies the whole chain)")
+        print("Or DRY_RUN=1 + a connected device to preview safely.")
+        return 2
 
-    step_inventory()
-    step_home_snapshot("before")
+    try:
+        step_inventory()
+        step_home_snapshot("before")
 
-    if dry:
-        print("\nDRY_RUN=1 — skipping destructive steps.")
-        return 0
+        if dry:
+            print("\nDRY_RUN=1 — skipping destructive steps.")
+            return 0
 
-    step_organize_folder()
-    step_uninstall(pkg)
-    step_empty_photos_bin()
-    step_home_snapshot("after")
+        step_organize_folder()
+        step_uninstall(pkg)
+        step_empty_photos_bin()
+        step_home_snapshot("after")
+    except SystemExit:
+        print("\n[hint] Diagnose with: android-harness --doctor")
+        raise
+    except Exception as e:
+        print(f"\n[fail] {type(e).__name__}: {e}")
+        print("[hint] Diagnose with: android-harness --doctor")
+        return 1
 
     print("\ndone. compare /tmp/android-home-before.png and /tmp/android-home-after.png")
     return 0
