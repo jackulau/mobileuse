@@ -70,8 +70,8 @@ def _run(script_body, *, timeout=180):
 def step_inventory():
     print("\n=== STEP 1 — installed apps ===")
     out = _run("""
-        from agent_helpers import list_installed_apps, storage_summary
         import json
+        # list_installed_apps, storage_summary auto-loaded into globals by harness
         apps = list_installed_apps()
         print(json.dumps(apps[:30], indent=2))
         print(f'... and {max(0, len(apps) - 30)} more.')
@@ -141,9 +141,8 @@ def step_uninstall(package):
         return
     print(f"\n=== STEP — uninstall {package!r} ===")
     out = _run(f"""
-        from agent_helpers import uninstall_app
         import json
-        r = uninstall_app({package!r})
+        r = uninstall_app({package!r})  # auto-loaded by harness
         print(json.dumps(r, indent=2))
     """, timeout=240)
     print(out)
@@ -176,7 +175,6 @@ def step_empty_photos_bin():
                         print("Empty action not in menu — bin already empty")
                     else:
                         tap(e); wait(0.5)
-                        from agent_helpers import confirm_destructive
                         ok = confirm_destructive("Delete") or \\
                              confirm_destructive("Permanently delete") or \\
                              confirm_destructive("Empty bin")

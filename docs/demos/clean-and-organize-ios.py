@@ -67,8 +67,8 @@ def _run(script_body, *, timeout=180):
 def step_inventory():
     print("\n=== STEP 1 — installed apps ===")
     out = _run("""
-        from agent_helpers import list_installed_apps, storage_summary
         import json
+        # list_installed_apps, storage_summary auto-loaded into globals by harness
         apps = list_installed_apps()
         print(json.dumps(apps, indent=2))
         print('---')
@@ -139,9 +139,8 @@ def step_organize_folder():
 def step_uninstall(app):
     print(f"\n=== STEP — uninstall {app!r} ===")
     out = _run(f"""
-        from agent_helpers import uninstall_app
         import json
-        r = uninstall_app({app!r})
+        r = uninstall_app({app!r})  # auto-loaded by harness
         print(json.dumps(r, indent=2))
     """, timeout=240)
     print(out)
@@ -173,7 +172,6 @@ def step_empty_recently_deleted():
                     da = find(label="Delete All", type="XCUIElementTypeButton")
                     if da:
                         tap(da); wait(0.5)
-                        from agent_helpers import confirm_destructive
                         ok = confirm_destructive("Delete From All Devices") or \\
                              confirm_destructive("Delete")
                         print("recently-deleted emptied:", ok)
