@@ -64,19 +64,19 @@ tap(find(name="explore-tab"))
 wait(2.5)
 sf = find(name="search-text-input", type="XCUIElementTypeSearchField")
 tap(sf); wait(0.4)
-set_value("name == 'search-text-input'", "openai")
+set_value("name == 'search-text-input'", "nasa")
 wait(1.5)
 ```
 
 Result cells follow this pattern:
-- `search-collection-view-cell-<username>` — for account suggestions (e.g. `search-collection-view-cell-openai`)
+- `search-collection-view-cell-<username>` — for account suggestions (e.g. `search-collection-view-cell-nasa`)
 - `search-collection-view-cell-<numeric-id>` — for search-term suggestions / topics
 - Each cell contains child `StaticText` with: handle, "verified account" marker, follower count (`'5.2M followers'`)
 
 **Trap: tapping the cell itself opens a search-results filter view, NOT the profile.** To navigate to a user's actual profile, tap the **`StaticText` whose name matches the username**:
 
 ```python
-tap(find(name="openai", type="XCUIElementTypeStaticText"))
+tap(find(name="nasa", type="XCUIElementTypeStaticText"))
 wait(3.5)
 # Now on the real profile
 ```
@@ -90,7 +90,7 @@ Stable header selectors (work on any profile):
 | `user-detail-header-media-button` | Posts count — child StaticText holds the number (`'1,748'`) |
 | `user-detail-header-followers` | Followers count |
 | `user-detail-header-following-button` | Following count |
-| `user-detail-header-follow-button` | Follow/Unfollow toggle (label changes: `'Follow openai'` ↔ `'Following'`) |
+| `user-detail-header-follow-button` | Follow/Unfollow toggle (label changes: `'Follow nasa'` ↔ `'Following'`) |
 | `profile-action-bar-button` | **3 instances per profile** — distinguish by `label`: `'Edit profile'` / `'Share profile'` (own profile) or `'Message'` (others) |
 | `profile-more-button` | Settings & activity (own profile only; top-right) |
 | `profile-more-bar-button` | More options (others' profiles) |

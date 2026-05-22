@@ -135,6 +135,6 @@ def test_training_stats_empty(tmp_data_dir):
 
 def test_metadata_field(tmp_data_dir):
     c = Collector(session_name="s1")
-    event = c.record(action="tap", metadata={"model": "gpt-4", "confidence": 0.95})
-    assert event["metadata"]["model"] == "gpt-4"
+    event = c.record(action="tap", metadata={"model": "test-model-v1", "confidence": 0.95})
+    assert event["metadata"]["model"] == "test-model-v1"
     assert event["metadata"]["confidence"] == 0.95
