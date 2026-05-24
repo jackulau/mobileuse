@@ -122,6 +122,91 @@ def appium(script, **args):
     return _send({"method": "appium", "params": {"script": script, "args": args}})["result"]
 
 
+# ---- device state + recovery -----------------------------------------------
+
+class DeviceDisconnectError(RuntimeError):
+    """Device became unreachable mid-call (USB disconnect, Appium timeout, ADB crash)."""
+
+
+def is_locked():
+    """True if screen is locked (lockscreen visible or display off)."""
+    try:
+        return bool(appium("mobile: isLocked"))
+    except Exception:
+        try:
+            info = appium("mobile: deviceInfo")
+            return bool(info.get("locked", False)) if isinstance(info, dict) else False
+        except Exception:
+            return False
+
+
+def wake_device():
+    """Wake screen + dismiss lock screen. No-op if already unlocked.
+
+    On Android, uses `mobile: unlock` if available, falls back to pressing
+    power + dismissing the lock screen via swipe up.
+    """
+    if not is_locked():
+        return False
+    try:
+        appium("mobile: unlock")
+    except Exception:
+        try:
+            appium("mobile: pressKey", keycode=26)  # POWER
+            time.sleep(0.5)
+            appium("mobile: pressKey", keycode=82)  # MENU (some devices unlock)
+        except Exception:
+            pass
+    return True
+
+
+def retry_on_disconnect(max_attempts=3, backoff=0.5):
+    """Decorator: retry on device-disconnect errors with backoff + wake.
+
+    Catches RuntimeError messages matching common disconnect signals
+    (USB pull, ADB session drop, UIAutomator2 timeout) and restarts the
+    daemon + wakes the device before each retry.
+
+    Usage:
+        @retry_on_disconnect(max_attempts=3)
+        def open_app(package):
+            appium('mobile: activateApp', appId=package)
+    """
+    DISCONNECT_PATTERNS = (
+        "unreachable", "disconnect", "session", "stale",
+        "connection", "timed out", "adb", "uiautomator",
+    )
+
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except RuntimeError as e:
+                    msg = str(e).lower()
+                    if not any(p.lower() in msg for p in DISCONNECT_PATTERNS):
+                        raise
+                    last_err = e
+                    if attempt < max_attempts - 1:
+                        time.sleep(backoff * (2 ** attempt))
+                        try:
+                            from .admin import restart_daemon, ensure_daemon
+                            restart_daemon()
+                            ensure_daemon()
+                            wake_device()
+                        except Exception:
+                            pass
+            raise DeviceDisconnectError(
+                f"{fn.__name__} failed after {max_attempts} attempts. Last error: {last_err}\n"
+                f"Run `android-harness --doctor` to diagnose."
+            ) from last_err
+        wrapper.__name__ = fn.__name__
+        wrapper.__doc__ = fn.__doc__
+        return wrapper
+    return decorator
+
+
 # ---- perception ------------------------------------------------------------
 
 def screenshot(path=None):
