@@ -110,6 +110,25 @@ def _linux_node_install_cmd():
     return None
 
 
+def _have_xcode():
+    """True if a usable Xcode is installed (not just Command Line Tools).
+
+    `xcodebuild -version` only succeeds when full Xcode is selected. CLT-only
+    setups return an error like 'xcode-select: error: tool xcodebuild requires Xcode'.
+    """
+    if sys.platform != "darwin":
+        return True  # iOS gating handles this; xcode irrelevant elsewhere
+    if not _have("xcodebuild"):
+        return False
+    try:
+        out = subprocess.check_output(
+            ["xcodebuild", "-version"], timeout=5.0, stderr=subprocess.STDOUT
+        ).decode()
+        return "Xcode" in out
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
 def _brew_has(pkg):
     if sys.platform != "darwin" or not _have("brew"):
         return False
@@ -156,6 +175,10 @@ def plan(ios=True, android=True):
     is_linux = sys.platform == "linux"
 
     if ios:
+        steps.append(("Xcode (full app, not just Command Line Tools)",
+                      _have_xcode,
+                      None,  # cannot auto-install Xcode; App Store only
+                      True))
         steps.append(("Homebrew (macOS package manager)",
                       lambda: _have("brew") or sys.platform != "darwin",
                       None,  # cannot auto-install brew; print message
@@ -244,6 +267,14 @@ def run(ios=True, android=True, dry_run=False):
                     print("     - Debian/Ubuntu: sudo apt install nodejs npm")
                     print("     - Fedora/RHEL:   sudo dnf install nodejs npm")
                     print("     - Arch/Manjaro:  sudo pacman -S nodejs npm")
+            elif "Xcode" in label:
+                print("   Install Xcode from the App Store (~10 GB, free):")
+                print("     1. Open the App Store, search for 'Xcode', click Get.")
+                print("     2. Launch Xcode once and accept the license:")
+                print("        sudo xcodebuild -license accept")
+                print("     3. Point command-line tools at Xcode:")
+                print("        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer")
+                print("   Then re-run: mobile-use bootstrap")
             else:
                 print('   Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
             rc = 1

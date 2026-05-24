@@ -65,7 +65,8 @@ def test_dry_run_does_not_invoke_subprocess(capsys, monkeypatch):
 
 def test_run_returns_0_when_everything_installed(monkeypatch, capsys):
     from mobile_use import bootstrap
-    monkeypatch.setattr(bootstrap, "_have", _stub_have({"brew", "node", "npm", "appium"}))
+    monkeypatch.setattr(bootstrap, "_have", _stub_have({"brew", "node", "npm", "appium", "xcodebuild"}))
+    monkeypatch.setattr(bootstrap, "_have_xcode", lambda: True)
     monkeypatch.setattr(bootstrap, "_brew_has", lambda pkg: True)
     monkeypatch.setattr(bootstrap, "_appium_driver_installed", lambda name: True)
     monkeypatch.setattr(bootstrap, "_python_pkg_importable", lambda: True)
@@ -199,3 +200,71 @@ def test_linux_plan_skips_xcuitest_in_android_only(monkeypatch):
     labels = " ".join(label for label, *_ in steps)
     assert "xcuitest" not in labels
     assert "libimobiledevice" not in labels
+
+
+# ---- xcode preflight -----------------------------------------------------
+
+def test_have_xcode_returns_true_off_macos(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    assert bootstrap._have_xcode() is True
+
+
+def test_have_xcode_returns_false_when_xcodebuild_missing(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    monkeypatch.setattr(bootstrap, "_have", lambda c: False)
+    assert bootstrap._have_xcode() is False
+
+
+def test_have_xcode_returns_true_when_xcodebuild_works(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    monkeypatch.setattr(bootstrap, "_have", lambda c: True)
+    monkeypatch.setattr(bootstrap.subprocess, "check_output", lambda *a, **kw: b"Xcode 16.0\n")
+    assert bootstrap._have_xcode() is True
+
+
+def test_have_xcode_returns_false_when_xcodebuild_errors(monkeypatch):
+    """xcode-select error on CLT-only setup must return False, not raise."""
+    import subprocess as sp
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    monkeypatch.setattr(bootstrap, "_have", lambda c: True)
+    def boom(*a, **kw):
+        raise sp.CalledProcessError(1, ["xcodebuild"], output=b"xcode-select: error: tool xcodebuild requires Xcode")
+    monkeypatch.setattr(bootstrap.subprocess, "check_output", boom)
+    assert bootstrap._have_xcode() is False
+
+
+def test_plan_includes_xcode_step_for_ios(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    steps = bootstrap.plan(ios=True, android=False)
+    labels = [s[0] for s in steps]
+    assert any("Xcode" in lbl for lbl in labels), f"Xcode step missing from iOS plan: {labels}"
+
+
+def test_plan_omits_xcode_when_android_only(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    steps = bootstrap.plan(ios=False, android=True)
+    labels = [s[0] for s in steps]
+    assert not any("Xcode" in lbl for lbl in labels), f"Xcode in android-only plan: {labels}"
+
+
+def test_run_halts_with_xcode_remediation_when_missing(monkeypatch, capsys):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    monkeypatch.setattr(bootstrap, "_have_xcode", lambda: False)
+    monkeypatch.setattr(bootstrap, "_have", lambda c: True)
+    monkeypatch.setattr(bootstrap, "_brew_has", lambda pkg: True)
+    monkeypatch.setattr(bootstrap, "_appium_driver_installed", lambda name: True)
+    monkeypatch.setattr(bootstrap, "_python_pkg_importable", lambda: True)
+
+    rc = bootstrap.run(ios=True, android=False, dry_run=True)
+    out = capsys.readouterr().out
+    assert "MISSING" in out
+    assert "App Store" in out
+    assert "xcode-select" in out
+    assert rc == 1
