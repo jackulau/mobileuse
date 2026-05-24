@@ -97,12 +97,26 @@ def test_check_signing_picks_latest_expiry(monkeypatch, tmp_path):
     assert "New" in details
 
 
-def test_main_check_only_exits_zero(monkeypatch, capsys):
+def test_main_check_only_returns_1_when_not_signed(monkeypatch, capsys):
     monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("not_signed", "test"))
     rc = ios_wda.main(["--check"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "signed" in out  # output still mentions "signed" (in "not_signed")
+
+
+def test_main_check_only_returns_0_when_signed(monkeypatch, capsys):
+    monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("signed", "valid"))
+    rc = ios_wda.main(["--check"])
+    assert rc == 0
+
+
+def test_main_help_returns_0_and_prints_usage(capsys):
+    rc = ios_wda.main(["--help"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "signed" in out  # "not_signed" contains "signed" substring
+    assert "sign-wda" in out.lower()
+    assert "--check" in out
 
 
 def test_main_no_check_when_signed(monkeypatch, capsys):

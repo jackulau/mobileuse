@@ -159,14 +159,25 @@ If build fails with a bundle-id collision:
 
 def main(argv):
     """Entry: mobile-use ios sign-wda [--check]"""
+    if any(a in {"-h", "--help"} for a in argv):
+        print(
+            "mobile-use ios sign-wda [--check]\n\n"
+            "WebDriverAgent must be signed with your Apple Team ID before Appium\n"
+            "can run on a physical iPhone. This command opens the WDA Xcode project\n"
+            "and prints the 6-step signing flow. Free Apple accounts re-sign weekly.\n\n"
+            "Options:\n"
+            "  --check    Print signing state and exit 0 if signed, 1 otherwise.\n"
+            "             Without --check, opens Xcode and walks through signing.\n"
+        )
+        return 0
     check_only = "--check" in argv
 
     state, details = check_wda_signing()
     print(f"WDA signing: {state}  ({details})")
 
     if check_only:
-        # Exit 0 always — caller wants the status, not a pass/fail.
-        return 0
+        # 0 = signed (ready); 1 = needs action.
+        return 0 if state == "signed" else 1
 
     if state == "signed":
         print("Nothing to do — WDA is signed.")

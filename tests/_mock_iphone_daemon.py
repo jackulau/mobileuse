@@ -54,6 +54,14 @@ class MockDaemon:
             return {"result": {"width": 390, "height": 844}}
         if method == "page_source":
             return {"result": "<XCUIElementTypeApplication name='SpringBoard'/>"}
+        if method == "click_element":
+            return {"result": {"matched": 1}}
+        if method == "send_keys":
+            return {"result": {"sent": req.get("params", {}).get("keys", ""), "matched": 1}}
+        if method == "set_value":
+            return {"result": {"set": req.get("params", {}).get("value", ""), "matched": 1}}
+        if method == "pick_wheel":
+            return {"result": {"value": "mock", "attempts": 1, "matched": True}}
         if method == "raise":
             raise RuntimeError("mock: intentional crash for tests")
         if method == "garbage_response":

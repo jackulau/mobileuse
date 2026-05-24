@@ -71,10 +71,25 @@ def _run_ios(args):
     if args[0] != "-c" or len(args) < 2:
         sys.exit('Usage: mobile-use --ios -c "print(active_app())"')
 
-    ensure_daemon()
+    try:
+        ensure_daemon()
+    except RuntimeError as e:
+        sys.exit(f"{e}")
     ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
     ns["__builtins__"] = __builtins__
-    exec(args[1], ns)
+    try:
+        exec(args[1], ns)
+    except SystemExit:
+        raise
+    except SyntaxError as e:
+        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
+    except Exception as e:
+        # Show the user's script error without the cli.py traceback noise.
+        import traceback
+        tb = traceback.format_exc()
+        # Strip the outer cli.py frame so the user sees their script's stack only.
+        sys.stderr.write(tb)
+        sys.exit(1)
 
 
 def _run_android(args):
@@ -94,10 +109,22 @@ def _run_android(args):
     if args[0] != "-c" or len(args) < 2:
         sys.exit('Usage: mobile-use --android -c "print(active_app())"')
 
-    ensure_daemon()
+    try:
+        ensure_daemon()
+    except RuntimeError as e:
+        sys.exit(f"{e}")
     ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
     ns["__builtins__"] = __builtins__
-    exec(args[1], ns)
+    try:
+        exec(args[1], ns)
+    except SystemExit:
+        raise
+    except SyntaxError as e:
+        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
+    except Exception:
+        import traceback
+        sys.stderr.write(traceback.format_exc())
+        sys.exit(1)
 
 
 def _doctor_both():
@@ -201,8 +228,8 @@ def main():
         if platform == "android" or platform is None:
             os.environ["ANH_NAME"] = instance_name
 
-    # Doctor with no platform → run both
-    if remaining and remaining[0] == "--doctor" and platform is None:
+    # Doctor with no platform → run both. Accept both `--doctor` (flag) and `doctor` (subcommand).
+    if remaining and remaining[0] in {"--doctor", "doctor"} and platform is None:
         sys.exit(_doctor_both())
 
     # New UX subcommands (no platform required)
@@ -218,10 +245,19 @@ def main():
         from . import quickstart
         sys.exit(quickstart.main(remaining[1:], platform=platform))
 
-    # ios sign-wda — WDA signing helper (the #1 setup blocker)
-    if remaining and remaining[:2] == ["ios", "sign-wda"]:
-        from . import ios_wda
-        sys.exit(ios_wda.main(remaining[2:]))
+    # ios <action> — iOS-specific subcommands.
+    if remaining and remaining[0] == "ios":
+        if len(remaining) < 2 or remaining[1] in {"-h", "--help"}:
+            print(
+                "mobile-use ios — iOS-specific subcommands:\n\n"
+                "  sign-wda [--check]    Sign WebDriverAgent in Xcode (the #1 setup blocker).\n"
+                "                        --check exits 0 if already signed, 1 otherwise.\n"
+            )
+            sys.exit(0 if len(remaining) >= 2 else 2)
+        if remaining[1] == "sign-wda":
+            from . import ios_wda
+            sys.exit(ios_wda.main(remaining[2:]))
+        sys.exit(f"Unknown `mobile-use ios` action: {remaining[1]!r}. Try `mobile-use ios --help`.")
 
     # Training data commands
     if remaining and remaining[0] == "export-training":

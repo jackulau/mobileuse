@@ -35,6 +35,16 @@ class MockDaemon:
             return {"result": {"path": "/tmp/anh-mock-shot.png", "bytes": 0}}
         if method == "window_size":
             return {"result": {"width": 1080, "height": 1920}}
+        if method == "page_source":
+            return {"result": "<hierarchy><node class='android.widget.FrameLayout'/></hierarchy>"}
+        if method == "click_element":
+            return {"result": {"matched": 1}}
+        if method == "send_keys":
+            return {"result": {"sent": req.get("params", {}).get("keys", ""), "matched": 1}}
+        if method == "set_value":
+            return {"result": {"set": req.get("params", {}).get("value", ""), "matched": 1}}
+        if method == "active_app":
+            return {"result": {"packageName": "com.android.launcher"}}
         return {"error": f"mock: unknown method {method!r}"}
 
 

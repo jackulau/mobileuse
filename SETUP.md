@@ -283,6 +283,23 @@ Something broke.
     └── → `mobile-use --doctor` then read SETUP.md for that step.
 ```
 
+## Daemon logs (debugging)
+
+When `iphone-harness -c '...'` or `android-harness -c '...'` fails after running for a while, check the daemon logs:
+
+```bash
+# iOS (one log per IPH_NAME, default "default"):
+tail -50 /tmp/iph-default.log
+
+# Android:
+tail -50 /tmp/anh-default.log
+
+# Live tail while running another shell:
+tail -f /tmp/iph-default.log
+```
+
+The daemon writes `connecting to Appium…`, `session ok`, `stale session, reconnecting`, and any `fatal:` lines here. If the log is empty or missing, the daemon never started — run `mobile-use --doctor`.
+
 ## iOS
 
 - **`xcodebuild failed with code 65`**: check Appium server log — usually untrusted cert, missing provisioning, or missing device support files.
