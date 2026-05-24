@@ -112,3 +112,61 @@ def test_error_messages_point_to_doctor():
     assert "android-harness --doctor" in src_a
     assert "reload" in src_i
     assert "reload" in src_a
+
+
+# ---- new doctor v2 checks --------------------------------------------------
+
+def test_ios_check_wda_signing_returns_tuple():
+    from iphone_harness.admin import _check_wda_signing
+    res = _check_wda_signing()
+    assert isinstance(res, tuple) and len(res) == 2
+    assert isinstance(res[0], bool)
+    assert isinstance(res[1], str)
+
+
+def test_ios_check_battery_returns_tuple():
+    from iphone_harness.admin import _check_battery
+    res = _check_battery()
+    assert isinstance(res, tuple) and len(res) == 2
+
+
+def test_android_check_battery_returns_tuple():
+    from android_harness.admin import _check_battery
+    res = _check_battery()
+    assert isinstance(res, tuple) and len(res) == 2
+
+
+def test_android_check_screen_unlocked_returns_tuple():
+    from android_harness.admin import _check_screen_unlocked
+    res = _check_screen_unlocked()
+    assert isinstance(res, tuple) and len(res) == 2
+
+
+def test_ios_doctor_includes_wda_signing_line():
+    from iphone_harness import admin
+    out = _run_doctor_output(admin)
+    assert "WebDriverAgent" in out or "WDA" in out
+
+
+def test_ios_doctor_includes_battery_line():
+    from iphone_harness import admin
+    out = _run_doctor_output(admin)
+    assert "battery" in out.lower()
+
+
+def test_android_doctor_includes_battery_line():
+    from android_harness import admin
+    out = _run_doctor_output(admin)
+    assert "battery" in out.lower()
+
+
+def test_total_doctor_checks_at_least_14():
+    """Combined iOS + Android numbered checks should be ≥14 (verify D8 target)."""
+    import re
+    from iphone_harness import admin as ios_admin
+    from android_harness import admin as anh_admin
+    ios_out = _run_doctor_output(ios_admin)
+    anh_out = _run_doctor_output(anh_admin)
+    ios_n = len(re.findall(r"^\[\d+/\d+\]", ios_out, flags=re.MULTILINE))
+    anh_n = len(re.findall(r"^\[\d+/\d+\]", anh_out, flags=re.MULTILINE))
+    assert ios_n + anh_n >= 14, f"only {ios_n} iOS + {anh_n} Android checks"

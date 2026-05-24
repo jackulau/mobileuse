@@ -306,6 +306,49 @@ def _check_python_pkg():
         return False, str(e)
 
 
+def _check_battery():
+    """Return (True, level%) if Android battery > 20%."""
+    udid = os.environ.get("ANH_UDID")
+    if shutil.which("adb") is None:
+        return True, "(skipped — adb not on PATH)"
+    cmd = ["adb"]
+    if udid:
+        cmd += ["-s", udid]
+    cmd += ["shell", "dumpsys", "battery"]
+    try:
+        out = subprocess.check_output(cmd, timeout=5.0, stderr=subprocess.DEVNULL).decode()
+        # `level: 73` line
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("level:"):
+                level = int(line.split(":", 1)[1].strip())
+                if level < 20:
+                    return False, f"{level}% (low — plug in to avoid disconnect)"
+                return True, f"{level}%"
+        return True, "(skipped — level field missing)"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        return True, "(skipped — battery info unavailable)"
+
+
+def _check_screen_unlocked():
+    """Return (True, state) if Android device screen is unlocked. (Doesn't fail if locked,
+    just informs the user.)"""
+    if shutil.which("adb") is None:
+        return True, "(skipped — adb not on PATH)"
+    udid = os.environ.get("ANH_UDID")
+    cmd = ["adb"]
+    if udid:
+        cmd += ["-s", udid]
+    cmd += ["shell", "dumpsys", "power"]
+    try:
+        out = subprocess.check_output(cmd, timeout=5.0, stderr=subprocess.DEVNULL).decode()
+        if "mWakefulness=Awake" in out:
+            return True, "screen on, awake"
+        return True, "screen off (helpers will wake_device() before interacting)"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return True, "(skipped — power info unavailable)"
+
+
 def run_doctor():
     print(f"android-harness {_version() or '(dev)'}\n")
     rc = 0
@@ -329,6 +372,10 @@ def run_doctor():
          f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
         ("Android device connected + USB debugging authorized", _check_device, (),
          "Plug in Android, Settings → Developer options → USB debugging → On, tap Allow on prompt"),
+        ("Device battery level (>20% recommended)", _check_battery, (),
+         "Plug in the device to charge. Low battery causes USB disconnects."),
+        ("Screen wakefulness", _check_screen_unlocked, (),
+         "Press power button. Or use wake_device() helper before interacting."),
     ]
     total = len(checks) + 2
 

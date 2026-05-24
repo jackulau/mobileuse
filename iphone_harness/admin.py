@@ -358,6 +358,39 @@ def _check_xcode():
         return False, str(e)
 
 
+def _check_wda_signing():
+    """Return (True, state) if WebDriverAgent is signed (provisioning profile valid)."""
+    try:
+        from mobile_use.ios_wda import check_wda_signing
+        state, details = check_wda_signing()
+        if state == "signed":
+            return True, details
+        return False, f"{state}: {details}"
+    except Exception as e:
+        return False, f"WDA check failed: {e}"
+
+
+def _check_battery():
+    """Return (True, level%) if device battery > 20%. Falls back to skipped if no tool."""
+    udid = os.environ.get("IPH_UDID")
+    if not udid:
+        return True, "(skipped — IPH_UDID not set)"
+    if shutil.which("ideviceinfo") is None:
+        return True, "(skipped — ideviceinfo not installed)"
+    try:
+        # `ideviceinfo -k BatteryCurrentCapacity` returns 0-100
+        out = subprocess.check_output(
+            ["ideviceinfo", "-u", udid, "-q", "com.apple.mobile.battery", "-k", "BatteryCurrentCapacity"],
+            timeout=5.0, stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        level = int(out)
+        if level < 20:
+            return False, f"{level}% (low — plug in to avoid disconnect)"
+        return True, f"{level}%"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        return True, "(skipped — battery info unavailable)"
+
+
 def run_doctor():
     """Diagnostic. Prints status of each external dependency. Returns 0 on all-green."""
     print(f"iphone-harness {_version() or '(dev)'}\n")
@@ -384,6 +417,10 @@ def run_doctor():
          f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
         ("iPhone paired + Developer Mode on", _check_device, (),
          "Plug in iPhone, `Trust This Computer` if prompted, Settings → Privacy & Security → Developer Mode → On"),
+        ("WebDriverAgent signed (provisioning profile present + not expired)", _check_wda_signing, (),
+         "Run `mobile-use ios sign-wda` — opens Xcode for the 6-step signing dance."),
+        ("Device battery level (>20% recommended)", _check_battery, (),
+         "Plug in the iPhone to charge. Low battery causes USB disconnects during long sessions."),
     ]
     total = len(checks) + 2
 
