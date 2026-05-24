@@ -755,6 +755,46 @@ def swipe(x1, y1, x2, y2, duration=0.4):
            fromX=x1, fromY=y1, toX=x2, toY=y2)
 
 
+def press_home():
+    """Go to the home screen. iOS equivalent of Android's press_home()."""
+    appium("mobile: pressButton", name="home")
+
+
+def swipe_back():
+    """Pop the current view by swiping from the left edge.
+
+    iOS has no hardware back button — UINavigationController honors the
+    edge-swipe-from-left gesture. This is the closest equivalent to
+    Android's press_back() for in-app navigation.
+    """
+    sz = window_size()
+    swipe(2, sz["height"] // 2, sz["width"] // 2, sz["height"] // 2, duration=0.3)
+
+
+def press_back():
+    """Alias for swipe_back() — provided for API symmetry with Android.
+
+    iOS has no hardware Back button; this triggers the swipe-from-left
+    gesture that pops the current UINavigationController view.
+    """
+    swipe_back()
+
+
+def open_app_switcher():
+    """Show the iOS App Switcher (swipe up from bottom, pause).
+
+    Android equivalent: press_recents().
+    """
+    sz = window_size()
+    swipe(sz["width"] // 2, sz["height"] - 2, sz["width"] // 2, sz["height"] // 2, duration=0.6)
+    wait(0.6)
+
+
+def press_recents():
+    """Alias for open_app_switcher() — API symmetry with Android."""
+    open_app_switcher()
+
+
 def scroll(direction="down", x=None, y=None):
     """Scroll the current scroll view. `direction` ∈ {up, down, left, right}.
     Pass x, y to scroll within a specific element if needed (XCUITest infers if omitted).
