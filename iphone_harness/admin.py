@@ -31,6 +31,70 @@ def daemon_alive(name=None):
     return ipc.ping(name or NAME, timeout=1.0)
 
 
+def _pid_alive(pid):
+    """True if a process with this pid exists."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists but not ours — don't wipe its files
+    except OSError:
+        return False
+
+
+def cleanup_stale(name=None):
+    """Remove leftover .pid + .sock from a dead daemon (no process behind them).
+
+    Called before spawn to keep stale state from a kill -9 / OOM / crash from
+    confusing the next ensure_daemon. Safe to call when no files exist or when
+    a live daemon owns them — it preserves anything still in use.
+    """
+    name = name or NAME
+    pid_path = ipc.pid_path(name)
+    sock_path_str = ipc.sock_addr(name)
+    from pathlib import Path as _P
+    sock_path = _P(sock_path_str)
+
+    # If a live daemon is responding on the socket, leave everything alone.
+    if ipc.ping(name, timeout=0.3):
+        return False
+
+    cleaned = False
+    # Read PID file if present; only unlink if the recorded process is gone.
+    try:
+        recorded = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        recorded = None
+
+    if recorded is not None and not _pid_alive(recorded):
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+    elif recorded is None and pid_path.exists():
+        # Unreadable PID file with nothing live behind it — drop it.
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    # The socket is unbound (ping above failed) — safe to remove.
+    if sock_path.exists():
+        try:
+            sock_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    return cleaned
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     """Spawn the daemon if no live one is reachable. Idempotent."""
     name = name or NAME
@@ -49,6 +113,9 @@ def ensure_daemon(wait=30.0, name=None, env=None):
         except Exception:
             pass
         restart_daemon(name)
+
+    # Stale .sock or .pid from a hard-killed previous daemon would confuse spawn.
+    cleanup_stale(name)
 
     e = {**os.environ, **({"IPH_NAME": name} if name else {}), **(env or {})}
     # IPH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
@@ -111,9 +178,21 @@ def restart_daemon(name=None):
             os.kill(daemon_pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
-        time.sleep(0.5)
+        # Wait up to 2s for SIGTERM to settle.
+        deadline = time.time() + 2.0
+        while time.time() < deadline and _pid_alive(daemon_pid):
+            time.sleep(0.1)
 
-    # Step 4: cleanup pid + sock files.
+    # Step 4: SIGKILL the daemon if it's still alive after SIGTERM.
+    if daemon_pid and _pid_alive(daemon_pid):
+        try:
+            os.kill(daemon_pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        # Reap zombie state on local process.
+        time.sleep(0.2)
+
+    # Step 5: cleanup pid + sock files.
     try: os.unlink(pid_path)
     except FileNotFoundError: pass
     ipc.cleanup_endpoint(name)

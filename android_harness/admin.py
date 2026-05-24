@@ -25,6 +25,61 @@ def daemon_alive(name=None):
     return ipc.ping(name or NAME, timeout=1.0)
 
 
+def _pid_alive(pid):
+    """True if a process with this pid exists."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def cleanup_stale(name=None):
+    """Remove leftover .pid + .sock from a dead daemon (no process behind them)."""
+    name = name or NAME
+    pid_path = ipc.pid_path(name)
+    sock_path_str = ipc.sock_addr(name)
+    from pathlib import Path as _P
+    sock_path = _P(sock_path_str)
+
+    if ipc.ping(name, timeout=0.3):
+        return False
+
+    cleaned = False
+    try:
+        recorded = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        recorded = None
+
+    if recorded is not None and not _pid_alive(recorded):
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+    elif recorded is None and pid_path.exists():
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    if sock_path.exists():
+        try:
+            sock_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    return cleaned
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     name = name or NAME
     if daemon_alive(name):
