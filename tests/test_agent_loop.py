@@ -80,11 +80,19 @@ def _install_fakes(monkeypatch, platform="ios"):
     fake_h = _make_fake_helpers(platform)
     fake_a = _make_fake_admin()
     if platform == "ios":
+        # Pre-import so the parent package exists, then patch both sys.modules
+        # AND the parent-package attribute (which is what `import pkg.sub as x` reads).
+        import iphone_harness
         monkeypatch.setitem(sys.modules, "iphone_harness.helpers", fake_h)
         monkeypatch.setitem(sys.modules, "iphone_harness.admin", fake_a)
+        monkeypatch.setattr(iphone_harness, "helpers", fake_h, raising=False)
+        monkeypatch.setattr(iphone_harness, "admin", fake_a, raising=False)
     else:
+        import android_harness
         monkeypatch.setitem(sys.modules, "android_harness.helpers", fake_h)
         monkeypatch.setitem(sys.modules, "android_harness.admin", fake_a)
+        monkeypatch.setattr(android_harness, "helpers", fake_h, raising=False)
+        monkeypatch.setattr(android_harness, "admin", fake_a, raising=False)
     return fake_h, fake_a
 
 
