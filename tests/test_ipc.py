@@ -309,6 +309,43 @@ def test_android_invalid_name_rejected():
         anh_ipc.sock_addr("")
 
 
+def test_iph_ipc_caps_oversized_response(iph_daemon, monkeypatch):
+    """IPC client should reject responses larger than _MAX_MSG (defense in depth)."""
+    name, _ = iph_daemon
+    s, token = iph_ipc.connect(name, timeout=1.0)
+    try:
+        # Temporarily lower the cap so we can trigger it without 64MB of data
+        monkeypatch.setattr(iph_ipc, "_MAX_MSG", 100)
+        # Ask the mock daemon for something whose JSON-encoded result exceeds 100 bytes.
+        # `page_source` returns an XML string from the mock — small but request adds overhead.
+        # Send a request that would yield a >100-byte JSON response.
+        with pytest.raises(RuntimeError, match="exceeded.*MB cap"):
+            iph_ipc.request(s, token, {
+                "method": "appium",
+                "params": {"script": "x" * 200, "args": {}},
+            })
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def test_anh_ipc_caps_oversized_response(anh_daemon, monkeypatch):
+    name, _ = anh_daemon
+    s, token = anh_ipc.connect(name, timeout=1.0)
+    try:
+        # Drop the cap below any plausible response — even a 60-byte appium reply trips it.
+        monkeypatch.setattr(anh_ipc, "_MAX_MSG", 10)
+        with pytest.raises(RuntimeError, match="exceeded.*MB cap"):
+            anh_ipc.request(s, token, {"method": "appium", "params": {}})
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
 def test_android_iphone_namespaces_separate(iph_name, anh_name):
     """iOS and Android socket namespaces must not collide for the same name."""
     # Same name but different prefixes — should produce different paths.

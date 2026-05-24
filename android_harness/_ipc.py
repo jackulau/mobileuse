@@ -55,7 +55,10 @@ def connect(name, timeout=1.0):
     return s, None
 
 
+_MAX_MSG = 64 * 1024 * 1024  # 64 MB cap
+
 def request(c, token, req):
+    """Caps incoming data at _MAX_MSG to prevent unbounded memory growth."""
     if token:
         req = {**req, "token": token}
     c.sendall((json.dumps(req) + "\n").encode())
@@ -65,6 +68,10 @@ def request(c, token, req):
         if not chunk:
             break
         data += chunk
+        if len(data) > _MAX_MSG:
+            raise RuntimeError(
+                f"IPC response exceeded {_MAX_MSG // (1024*1024)}MB cap — daemon malfunction?"
+            )
     return json.loads(data or b"{}")
 
 
