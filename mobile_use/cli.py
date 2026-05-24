@@ -155,32 +155,43 @@ def _doctor_both():
 
 HELP = """mobile-use — direct mobile device control via Appium
 
-Quickstart (first run):
-  mobile-use bootstrap                 install Appium + driver + system deps
-  mobile-use init                      write .env from connected device
-  mobile-use quickstart                doctor + smoke test (proves it works)
+QUICKSTART (first run, three commands):
+  mobile-use bootstrap [--dry-run] [--ios-only] [--android-only]
+                                       install Appium + driver + system deps
+  mobile-use init [--yes]              write .env from connected device
+  mobile-use quickstart [--ios|--android]
+                                       doctor + smoke test (proves it works)
 
-Usage:
-  mobile-use --ios -c '<python>'       run iOS script (iphone-harness)
-  mobile-use --android -c '<python>'   run Android script (android-harness)
-  mobile-use -c '<python>'             auto-detect platform
-  mobile-use --doctor                  diagnose all platforms
-  mobile-use --ios --doctor            diagnose iOS only
-  mobile-use --android --doctor        diagnose Android only
-  mobile-use ios sign-wda              re-sign WebDriverAgent (iOS setup blocker)
+RUN SCRIPTS:
+  mobile-use -c '<python>'             auto-detect platform (single device)
+  mobile-use --ios -c '<python>'       force iOS
+  mobile-use --android -c '<python>'   force Android
   mobile-use agent [--ios|--android]   persistent agent loop
-  mobile-use export-training [FILE]   export training data to JSONL
-  mobile-use training-stats           show training data summary
-  mobile-use --version
 
-Options:
-  --name <NAME>   Named daemon instance for multiboxing (multiple devices).
-                  Each name gets its own Appium session and Unix socket.
+DIAGNOSE:
+  mobile-use --doctor                  diagnose all platforms
+  mobile-use --ios --doctor            iOS only
+  mobile-use --android --doctor        Android only
 
-Auto-detection: when only one device type is connected, --ios/--android
-is inferred. When both are connected, you must specify.
+SETUP & MAINTENANCE:
+  mobile-use ios sign-wda [--check]    re-sign WebDriverAgent (iOS #1 blocker)
+  mobile-use ios build-wda [--check]   build WebDriverAgent test target (iOS first-run)
+  mobile-use --reload                  nuke daemon (kills stale state)
+  mobile-use --ios --reload            iOS daemon only
+  mobile-use --android --reload        Android daemon only
 
-Multiboxing (Python API):
+DATA:
+  mobile-use export-training [FILE]    export training data to JSONL
+  mobile-use training-stats            show training data summary
+
+OPTIONS:
+  --name <NAME>   Named daemon for multiboxing (per-device socket + session).
+  --version       Show version
+
+AUTO-DETECT: when exactly one device type is connected, --ios/--android
+is inferred. When both connected, you must specify.
+
+MULTIBOXING (Python API):
   from mobile_use import DevicePool
   pool = DevicePool()
   pool.add_ios("iphone1", udid="...")
@@ -188,9 +199,13 @@ Multiboxing (Python API):
   pool.ensure_all_ready()
   pool.broadcast(lambda d: d.screenshot())
 
-Platform-specific CLIs still work:
-  iphone-harness -c '...'
-  android-harness -c '...'
+PLATFORM-SPECIFIC CLIs (also installed):
+  iphone-harness -c '...' | --doctor | --reload
+  android-harness -c '...' | --doctor | --reload
+
+DOCS:
+  README.md         quickstart + runtime helpers
+  SETUP.md          full per-step setup + troubleshooting tree
 """
 
 
@@ -252,11 +267,16 @@ def main():
                 "mobile-use ios — iOS-specific subcommands:\n\n"
                 "  sign-wda [--check]    Sign WebDriverAgent in Xcode (the #1 setup blocker).\n"
                 "                        --check exits 0 if already signed, 1 otherwise.\n"
+                "  build-wda [--check]   Build the WebDriverAgent test target (first-run setup).\n"
+                "                        --check exits 0 if already built, 1 otherwise.\n"
             )
             sys.exit(0 if len(remaining) >= 2 else 2)
         if remaining[1] == "sign-wda":
             from . import ios_wda
             sys.exit(ios_wda.main(remaining[2:]))
+        if remaining[1] == "build-wda":
+            from . import ios_wda
+            sys.exit(ios_wda.build_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use ios` action: {remaining[1]!r}. Try `mobile-use ios --help`.")
 
     # Training data commands
