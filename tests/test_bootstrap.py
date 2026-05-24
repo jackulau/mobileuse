@@ -87,3 +87,115 @@ def test_main_dry_run_smoke():
     # Should never raise even on a partially-set-up dev box.
     rc = bootstrap.main(["--dry-run"])
     assert rc in (0, 1)  # 0 if everything installed; 1 if brew missing
+
+
+# ---- linux package manager detection -------------------------------------
+
+def test_linux_pkg_manager_returns_none_on_macos(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    assert bootstrap._linux_pkg_manager() is None
+
+
+def test_linux_pkg_manager_detects_ubuntu(monkeypatch, tmp_path):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    fake = tmp_path / "os-release"
+    fake.write_text('ID=ubuntu\nID_LIKE=debian\n')
+    # bootstrap reads /etc/os-release directly, so we need to patch Path or read.
+    # Simpler: stub _linux_pkg_manager helpers via monkeypatch of the function inputs.
+    # Use unittest.mock on Path.read_text via a wrapper.
+    real_read = bootstrap.Path.read_text
+    def fake_read(self, *a, **kw):
+        if str(self) == "/etc/os-release":
+            return 'ID=ubuntu\nID_LIKE=debian\n'
+        return real_read(self, *a, **kw)
+    monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)
+    assert bootstrap._linux_pkg_manager() == "apt"
+
+
+def test_linux_pkg_manager_detects_fedora(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    real_read = bootstrap.Path.read_text
+    def fake_read(self, *a, **kw):
+        if str(self) == "/etc/os-release":
+            return 'ID=fedora\n'
+        return real_read(self, *a, **kw)
+    monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)
+    assert bootstrap._linux_pkg_manager() == "dnf"
+
+
+def test_linux_pkg_manager_detects_arch(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    real_read = bootstrap.Path.read_text
+    def fake_read(self, *a, **kw):
+        if str(self) == "/etc/os-release":
+            return 'ID=arch\n'
+        return real_read(self, *a, **kw)
+    monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)
+    assert bootstrap._linux_pkg_manager() == "pacman"
+
+
+def test_linux_adb_install_cmd_apt(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "apt")
+    cmd = bootstrap._linux_adb_install_cmd()
+    assert "apt" in " ".join(cmd)
+    assert "android-tools-adb" in " ".join(cmd)
+
+
+def test_linux_adb_install_cmd_dnf(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "dnf")
+    cmd = bootstrap._linux_adb_install_cmd()
+    assert "dnf" in " ".join(cmd)
+
+
+def test_linux_adb_install_cmd_pacman(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "pacman")
+    cmd = bootstrap._linux_adb_install_cmd()
+    assert "pacman" in " ".join(cmd)
+
+
+def test_linux_adb_install_returns_none_when_unknown(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: None)
+    assert bootstrap._linux_adb_install_cmd() is None
+
+
+def test_linux_node_install_apt(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "apt")
+    cmd = bootstrap._linux_node_install_cmd()
+    assert "nodejs" in " ".join(cmd)
+    assert "npm" in " ".join(cmd)
+
+
+def test_linux_plan_uses_apt_for_adb(monkeypatch):
+    """On Linux+apt, plan should include an apt install command for adb."""
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "apt")
+    steps = bootstrap.plan(ios=False, android=True)
+    # Find the adb step
+    for label, check, cmd, mac_only in steps:
+        if "adb" in label.lower():
+            assert cmd is not None
+            assert "apt" in " ".join(cmd)
+            assert mac_only is False
+            break
+    else:
+        pytest.fail("no adb step found in Linux plan")
+
+
+def test_linux_plan_skips_xcuitest_in_android_only(monkeypatch):
+    from mobile_use import bootstrap
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: "apt")
+    steps = bootstrap.plan(ios=False, android=True)
+    labels = " ".join(label for label, *_ in steps)
+    assert "xcuitest" not in labels
+    assert "libimobiledevice" not in labels

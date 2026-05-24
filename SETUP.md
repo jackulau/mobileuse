@@ -115,8 +115,31 @@ iphone-harness -c 'print(active_app())'
 # Part B — Android Setup
 
 Android setup is significantly simpler than iOS — no signing, no Xcode, no provisioning.
+**Works on macOS and Linux.** iOS requires macOS+Xcode; Android does not.
 
-## B1. System tools (Mac side)
+## B1. System tools
+
+### Linux (Ubuntu/Debian/Fedora/Arch)
+
+```bash
+# Ubuntu / Debian / Mint:
+sudo apt install -y android-tools-adb nodejs npm
+
+# Fedora / RHEL / Rocky:
+sudo dnf install -y android-tools nodejs npm
+
+# Arch / Manjaro:
+sudo pacman -S --noconfirm android-tools nodejs npm
+
+# Then (any Linux):
+npm i -g appium
+appium driver install uiautomator2
+pip install -e .
+```
+
+`mobile-use bootstrap` autodetects the Linux package manager via `/etc/os-release`.
+
+### macOS
 
 ### Install Android SDK Platform Tools
 

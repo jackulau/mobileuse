@@ -7,7 +7,9 @@ quick. Output is a numbered plan followed by per-step result. Honors
 Does NOT install Xcode (gates on it with clear instructions). Does NOT
 install Python — assumes the user invoked this with python3.
 
-Non-macOS: brew steps are skipped with a per-OS hint (apt, dnf, pacman).
+Linux: Android path works (adb is cross-platform). iOS requires macOS+Xcode,
+so iOS steps are skipped on Linux with a clear message. Detects apt/dnf/pacman
+via /etc/os-release ID/ID_LIKE and emits the right install command.
 """
 import os
 import shutil
@@ -26,6 +28,66 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _have(cmd):
     return shutil.which(cmd) is not None
+
+
+def _linux_pkg_manager():
+    """Return 'apt' | 'dnf' | 'pacman' | None based on the host distro.
+
+    Reads /etc/os-release ID + ID_LIKE for portability across derivatives:
+    Ubuntu/Debian/Mint → apt; Fedora/RHEL/CentOS → dnf; Arch/Manjaro → pacman.
+    Falls back to PATH lookup if /etc/os-release is missing.
+    """
+    if sys.platform != "linux":
+        return None
+    ids = set()
+    try:
+        for line in Path("/etc/os-release").read_text().splitlines():
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            v = v.strip().strip('"').strip("'")
+            if k == "ID":
+                ids.add(v)
+            elif k == "ID_LIKE":
+                ids.update(v.split())
+    except (FileNotFoundError, OSError):
+        pass
+
+    apt_like = {"debian", "ubuntu", "mint", "pop", "raspbian"}
+    dnf_like = {"fedora", "rhel", "centos", "rocky", "almalinux"}
+    pacman_like = {"arch", "manjaro", "endeavouros"}
+
+    if ids & apt_like or _have("apt"):
+        return "apt"
+    if ids & dnf_like or _have("dnf"):
+        return "dnf"
+    if ids & pacman_like or _have("pacman"):
+        return "pacman"
+    return None
+
+
+def _linux_adb_install_cmd():
+    """Return the install argv for adb on this Linux distro, or None."""
+    pm = _linux_pkg_manager()
+    if pm == "apt":
+        return ["sudo", "apt", "install", "-y", "android-tools-adb"]
+    if pm == "dnf":
+        return ["sudo", "dnf", "install", "-y", "android-tools"]
+    if pm == "pacman":
+        return ["sudo", "pacman", "-S", "--noconfirm", "android-tools"]
+    return None
+
+
+def _linux_node_install_cmd():
+    """Return the install argv for node+npm on this Linux distro, or None."""
+    pm = _linux_pkg_manager()
+    if pm == "apt":
+        return ["sudo", "apt", "install", "-y", "nodejs", "npm"]
+    if pm == "dnf":
+        return ["sudo", "dnf", "install", "-y", "nodejs", "npm"]
+    if pm == "pacman":
+        return ["sudo", "pacman", "-S", "--noconfirm", "nodejs", "npm"]
+    return None
 
 
 def _brew_has(pkg):
@@ -64,8 +126,14 @@ def _python_pkg_importable():
 def plan(ios=True, android=True):
     """Return a list of (label, check_fn, run_cmd_list, mac_only) tuples for
     the current state. Steps already satisfied stay in the list w/ a True
-    check so the caller can show 'OK' for them."""
+    check so the caller can show 'OK' for them.
+
+    On Linux: iOS-side steps still emit (gated by mac_only → SKIP at run time).
+    Android-side steps emit a Linux-native install command via the host's
+    apt/dnf/pacman.
+    """
     steps = []
+    is_linux = sys.platform == "linux"
 
     if ios:
         steps.append(("Homebrew (macOS package manager)",
@@ -77,14 +145,27 @@ def plan(ios=True, android=True):
                       ["brew", "install", "libimobiledevice", "ideviceinstaller"],
                       True))
     if android:
-        steps.append(("brew install android-platform-tools (adb)",
-                      lambda: _brew_has("android-platform-tools") or _have("adb"),
-                      ["brew", "install", "android-platform-tools"],
+        if is_linux:
+            steps.append(("Android Platform Tools (adb) — Linux",
+                          lambda: _have("adb"),
+                          _linux_adb_install_cmd(),
+                          False))
+        else:
+            steps.append(("brew install android-platform-tools (adb)",
+                          lambda: _brew_has("android-platform-tools") or _have("adb"),
+                          ["brew", "install", "android-platform-tools"],
+                          True))
+    # Node + npm — macOS via brew; Linux via apt/dnf/pacman.
+    if is_linux:
+        steps.append(("Node.js + npm — Linux",
+                      lambda: _have("node") and _have("npm"),
+                      _linux_node_install_cmd(),
+                      False))
+    else:
+        steps.append(("Node.js + npm",
+                      lambda: _have("node") and _have("npm"),
+                      ["brew", "install", "node"],
                       True))
-    steps.append(("Node.js + npm",
-                  lambda: _have("node") and _have("npm"),
-                  ["brew", "install", "node"],
-                  True))
     steps.append(("Appium (CLI + server)",
                   lambda: _have("appium"),
                   ["npm", "i", "-g", "appium"],
@@ -120,7 +201,9 @@ def run(ios=True, android=True, dry_run=False):
         prefix = f"[{i}/{len(steps)}]"
 
         if mac_only and sys.platform != "darwin":
-            print(f"{prefix} {label}: SKIP (non-macOS — install via your OS pkg manager)")
+            hint = "iOS requires macOS + Xcode" if "iOS" in label or "libimobiledevice" in label \
+                else "install via your OS pkg manager"
+            print(f"{prefix} {label}: SKIP ({hint})")
             continue
 
         if check():
@@ -128,9 +211,21 @@ def run(ios=True, android=True, dry_run=False):
             continue
 
         if cmd is None:
-            # Special-case: brew itself.
+            # Either brew itself (macOS), or an unknown Linux distro with no
+            # known package manager.
             print(f"{prefix} {label}: MISSING")
-            print('   Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
+            if sys.platform == "linux":
+                print("   No supported package manager detected. Install manually:")
+                if "adb" in label.lower() or "platform tools" in label.lower():
+                    print("     - Debian/Ubuntu: sudo apt install android-tools-adb")
+                    print("     - Fedora/RHEL:   sudo dnf install android-tools")
+                    print("     - Arch/Manjaro:  sudo pacman -S android-tools")
+                elif "node" in label.lower():
+                    print("     - Debian/Ubuntu: sudo apt install nodejs npm")
+                    print("     - Fedora/RHEL:   sudo dnf install nodejs npm")
+                    print("     - Arch/Manjaro:  sudo pacman -S nodejs npm")
+            else:
+                print('   Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
             rc = 1
             continue
 
