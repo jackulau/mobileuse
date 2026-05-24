@@ -66,27 +66,47 @@ def _linux_pkg_manager():
     return None
 
 
+def _sudo_prefix():
+    """Return ['sudo'] if needed + available, [] if running as root, None if sudo missing."""
+    if sys.platform != "linux":
+        return []
+    try:
+        if os.geteuid() == 0:
+            return []  # already root
+    except AttributeError:
+        return []  # non-POSIX
+    if shutil.which("sudo") is None:
+        return None  # neither root nor sudo
+    return ["sudo"]
+
+
 def _linux_adb_install_cmd():
     """Return the install argv for adb on this Linux distro, or None."""
     pm = _linux_pkg_manager()
+    prefix = _sudo_prefix()
+    if prefix is None:
+        return None  # need root and no sudo available
     if pm == "apt":
-        return ["sudo", "apt", "install", "-y", "android-tools-adb"]
+        return prefix + ["apt", "install", "-y", "android-tools-adb"]
     if pm == "dnf":
-        return ["sudo", "dnf", "install", "-y", "android-tools"]
+        return prefix + ["dnf", "install", "-y", "android-tools"]
     if pm == "pacman":
-        return ["sudo", "pacman", "-S", "--noconfirm", "android-tools"]
+        return prefix + ["pacman", "-S", "--noconfirm", "android-tools"]
     return None
 
 
 def _linux_node_install_cmd():
     """Return the install argv for node+npm on this Linux distro, or None."""
     pm = _linux_pkg_manager()
+    prefix = _sudo_prefix()
+    if prefix is None:
+        return None
     if pm == "apt":
-        return ["sudo", "apt", "install", "-y", "nodejs", "npm"]
+        return prefix + ["apt", "install", "-y", "nodejs", "npm"]
     if pm == "dnf":
-        return ["sudo", "dnf", "install", "-y", "nodejs", "npm"]
+        return prefix + ["dnf", "install", "-y", "nodejs", "npm"]
     if pm == "pacman":
-        return ["sudo", "pacman", "-S", "--noconfirm", "nodejs", "npm"]
+        return prefix + ["pacman", "-S", "--noconfirm", "nodejs", "npm"]
     return None
 
 

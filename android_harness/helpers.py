@@ -141,23 +141,31 @@ def is_locked():
 
 
 def wake_device():
-    """Wake screen + dismiss lock screen. No-op if already unlocked.
+    """Wake screen + dismiss lock screen. Returns True iff device ends up unlocked.
 
     On Android, uses `mobile: unlock` if available, falls back to pressing
     power + dismissing the lock screen via swipe up.
     """
     if not is_locked():
-        return False
+        return True  # already awake
+    unlocked = False
     try:
         appium("mobile: unlock")
+        unlocked = True
     except Exception:
         try:
             appium("mobile: pressKey", keycode=26)  # POWER
             time.sleep(0.5)
             appium("mobile: pressKey", keycode=82)  # MENU (some devices unlock)
+            unlocked = True
         except Exception:
-            pass
-    return True
+            unlocked = False
+    if not unlocked:
+        return False
+    try:
+        return not is_locked()
+    except Exception:
+        return False
 
 
 def retry_on_disconnect(max_attempts=3, backoff=0.5):
@@ -172,6 +180,10 @@ def retry_on_disconnect(max_attempts=3, backoff=0.5):
         def open_app(package):
             appium('mobile: activateApp', appId=package)
     """
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise ValueError(f"backoff must be >= 0, got {backoff!r}")
     DISCONNECT_PATTERNS = (
         "unreachable", "disconnect", "session", "stale",
         "connection", "timed out", "adb", "uiautomator",
@@ -802,6 +814,8 @@ def record_screen(duration=10, path=None, bit_rate="4M", size=None):
     Returns:
         Path string of the saved .mp4 file.
     """
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ValueError(f"record_screen duration must be > 0, got {duration!r}")
     if duration > 180:
         raise RuntimeError(
             f"adb screenrecord caps at 180s per segment; got {duration}.\n"
@@ -809,6 +823,12 @@ def record_screen(duration=10, path=None, bit_rate="4M", size=None):
         )
     if path is None:
         path = str(ipc._TMP / f"anh-record-{int(time.time())}.mp4")
+    import os as _os
+    if _os.path.isdir(path):
+        raise IsADirectoryError(f"record_screen path is a directory: {path}")
+    parent = _os.path.dirname(_os.path.abspath(path))
+    if parent and not _os.path.exists(parent):
+        _os.makedirs(parent, exist_ok=True)
     args = {"timeLimit": int(duration) + 5, "bitRate": bit_rate}
     if size:
         args["videoSize"] = size

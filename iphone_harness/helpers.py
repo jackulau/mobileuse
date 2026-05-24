@@ -144,20 +144,30 @@ def is_locked():
 def wake_device():
     """Wake screen + dismiss lock screen if shown. No-op if already unlocked.
 
+    Returns True if the device is unlocked after the call, False otherwise.
     Use before any script that needs to interact when the device may have
     timed out to lock. Pairs well with @retry_on_disconnect.
     """
     if not is_locked():
-        return False
+        return True  # already awake
+    unlocked = False
     try:
         appium("mobile: unlock")
+        unlocked = True
     except Exception:
-        # No passcode set, or WDA hiccup — try power button + swipe-up fallback.
+        # No passcode set, or WDA hiccup — try power button as fallback.
         try:
             appium("mobile: pressButton", name="power")
+            unlocked = True
         except Exception:
-            pass
-    return True
+            unlocked = False
+    if not unlocked:
+        return False
+    # Confirm post-state — unlock() may have returned without actually unlocking.
+    try:
+        return not is_locked()
+    except Exception:
+        return False
 
 
 def retry_on_disconnect(max_attempts=3, backoff=0.5):
@@ -172,6 +182,10 @@ def retry_on_disconnect(max_attempts=3, backoff=0.5):
             tap(find(label='Compose'))
             type_text(text)
     """
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise ValueError(f"backoff must be >= 0, got {backoff!r}")
     DISCONNECT_PATTERNS = (
         "unreachable", "disconnect", "session", "stale",
         "connection", "timed out", "WebDriver", "wda",
@@ -1105,7 +1119,7 @@ def record_screen(duration=10, path=None, fps=10, quality="medium"):
     to `path` (or a /tmp default).
 
     Args:
-        duration: seconds to record (XCUITest caps at 1800s ≈ 30min)
+        duration: positive seconds to record (XCUITest caps at 1800s ≈ 30min)
         path: host filesystem path; defaults to /tmp/iph-record-<ts>.mp4
         fps: frame rate (default 10)
         quality: 'low' | 'medium' | 'high' | 'photo'
@@ -1113,8 +1127,19 @@ def record_screen(duration=10, path=None, fps=10, quality="medium"):
     Returns:
         Path string of the saved .mp4 file.
     """
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ValueError(f"record_screen duration must be > 0, got {duration!r}")
+    if duration > 1800:
+        raise ValueError(f"record_screen duration must be <= 1800s (got {duration}); XCUITest cap")
     if path is None:
         path = str(ipc._TMP / f"iph-record-{int(time.time())}.mp4")
+    # Ensure parent dir exists + path isn't a directory.
+    import os as _os
+    if _os.path.isdir(path):
+        raise IsADirectoryError(f"record_screen path is a directory: {path}")
+    parent = _os.path.dirname(_os.path.abspath(path))
+    if parent and not _os.path.exists(parent):
+        _os.makedirs(parent, exist_ok=True)
     try:
         appium("mobile: startRecordingScreen", timeLimit=int(duration) + 5,
                videoFps=int(fps), videoQuality=quality)

@@ -27,7 +27,8 @@ def daemon_alive(name=None):
 
 def _pid_alive(pid):
     """True if a process with this pid exists."""
-    if not isinstance(pid, int) or pid <= 0:
+    # isinstance(True, int) is True — reject bool to avoid os.kill(1, 0).
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
@@ -54,7 +55,7 @@ def cleanup_stale(name=None):
     cleaned = False
     try:
         recorded = int(pid_path.read_text().strip())
-    except (FileNotFoundError, ValueError):
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
         recorded = None
 
     if recorded is not None and not _pid_alive(recorded):
@@ -321,9 +322,13 @@ def _check_battery():
         for line in out.splitlines():
             line = line.strip()
             if line.startswith("level:"):
-                level = int(line.split(":", 1)[1].strip())
+                raw = line.split(":", 1)[1].strip()
+                try:
+                    level = int(raw)
+                except (ValueError, TypeError):
+                    return True, f"(skipped — battery level unreadable: {raw!r})"
                 if level < 20:
-                    return False, f"{level}% (low — plug in to avoid disconnect)"
+                    return True, f"{level}% (WARN: low — plug in to avoid disconnect)"
                 return True, f"{level}%"
         return True, "(skipped — level field missing)"
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):

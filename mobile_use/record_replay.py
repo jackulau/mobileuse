@@ -78,6 +78,12 @@ def start_recording(output_path: str, helpers, fn_names: tuple[str, ...] | None 
     if _state["recording"]:
         raise RuntimeError("record_replay: already recording — call stop_recording() first.")
 
+    if not hasattr(helpers, "__name__"):
+        raise TypeError(
+            f"record_replay: helpers must be a module-like object with __name__, "
+            f"got {type(helpers).__name__}"
+        )
+
     _state["recording"] = True
     _state["journal"] = []
     _state["output_path"] = output_path
@@ -86,12 +92,24 @@ def start_recording(output_path: str, helpers, fn_names: tuple[str, ...] | None 
     _state["started_at"] = time.time()
 
     names = fn_names or RECORDED_HELPERS
-    for name in names:
-        original = getattr(helpers, name, None)
-        if original is None or not callable(original):
-            continue
-        _state["originals"][name] = original
-        setattr(helpers, name, _make_recorder(name, original))
+    try:
+        for name in names:
+            original = getattr(helpers, name, None)
+            if original is None or not callable(original):
+                continue
+            _state["originals"][name] = original
+            setattr(helpers, name, _make_recorder(name, original))
+    except Exception:
+        # Partial wrap → restore everything and clear state
+        for n, orig in _state["originals"].items():
+            try:
+                setattr(helpers, n, orig)
+            except Exception:
+                pass
+        _state["recording"] = False
+        _state["journal"] = []
+        _state["originals"] = {}
+        raise
 
 
 def stop_recording() -> str:
@@ -153,6 +171,42 @@ def _generate_script(journal: list[dict], helpers_module: str) -> str:
         prev_t = entry["t"]
     lines.append('')
     return "\n".join(lines)
+
+
+class recording:
+    """Context manager around start_recording/stop_recording.
+
+    Guarantees stop_recording is called even if the body raises, so helpers
+    are always restored. Returns the output path on __exit__.
+
+        with recording("flow.py", helpers=h):
+            h.tap_at_xy(100, 200)
+            h.type_text("hello")
+    """
+    def __init__(self, output_path, helpers, fn_names=None):
+        self.output_path = output_path
+        self.helpers = helpers
+        self.fn_names = fn_names
+
+    def __enter__(self):
+        start_recording(self.output_path, self.helpers, self.fn_names)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if _state["recording"]:
+            try:
+                stop_recording()
+            except Exception:
+                # Best-effort: ensure helpers restored even if write fails
+                for n, orig in _state["originals"].items():
+                    try:
+                        setattr(_state["helpers_module"], n, orig)
+                    except Exception:
+                        pass
+                _state["recording"] = False
+                _state["journal"] = []
+                _state["originals"] = {}
+        return False  # don't swallow exceptions
 
 
 def replay(script_path: str, helpers=None):

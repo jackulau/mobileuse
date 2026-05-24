@@ -33,7 +33,8 @@ def daemon_alive(name=None):
 
 def _pid_alive(pid):
     """True if a process with this pid exists."""
-    if not isinstance(pid, int) or pid <= 0:
+    # isinstance(True, int) is True in Python — reject bool to avoid os.kill(1, 0).
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
@@ -65,9 +66,11 @@ def cleanup_stale(name=None):
 
     cleaned = False
     # Read PID file if present; only unlink if the recorded process is gone.
+    # Tolerate binary garbage (UnicodeDecodeError) + empty string (ValueError) +
+    # permission-denied (PermissionError) — all mean "treat as stale, remove".
     try:
         recorded = int(pid_path.read_text().strip())
-    except (FileNotFoundError, ValueError):
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
         recorded = None
 
     if recorded is not None and not _pid_alive(recorded):
@@ -383,9 +386,12 @@ def _check_battery():
             ["ideviceinfo", "-u", udid, "-q", "com.apple.mobile.battery", "-k", "BatteryCurrentCapacity"],
             timeout=5.0, stderr=subprocess.DEVNULL,
         ).decode().strip()
-        level = int(out)
+        try:
+            level = int(out)
+        except (ValueError, TypeError):
+            return True, f"(skipped — battery level unreadable: {out!r})"
         if level < 20:
-            return False, f"{level}% (low — plug in to avoid disconnect)"
+            return True, f"{level}% (WARN: low — plug in to avoid disconnect)"
         return True, f"{level}%"
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
         return True, "(skipped — battery info unavailable)"

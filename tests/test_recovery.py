@@ -77,12 +77,15 @@ def test_iph_is_locked_handles_exception(monkeypatch):
 
 
 def test_iph_wake_device_noop_when_unlocked(monkeypatch):
+    """Already-unlocked returns True (post-state confirmed unlocked)."""
     monkeypatch.setattr(iph, "is_locked", lambda: False)
-    assert iph.wake_device() is False
+    assert iph.wake_device() is True
 
 
 def test_iph_wake_device_calls_unlock_when_locked(monkeypatch):
-    monkeypatch.setattr(iph, "is_locked", lambda: True)
+    """Locked → unlock called → post-state checked → True iff unlocked after."""
+    states = iter([True, False])  # locked at start, unlocked after unlock()
+    monkeypatch.setattr(iph, "is_locked", lambda: next(states))
     called = {}
 
     def fake_appium(script, **kw):
@@ -148,12 +151,14 @@ def test_anh_is_locked_handles_exception(monkeypatch):
 
 
 def test_anh_wake_device_noop_when_unlocked(monkeypatch):
+    """Already-unlocked → True (no work needed; post-state is unlocked)."""
     monkeypatch.setattr(anh, "is_locked", lambda: False)
-    assert anh.wake_device() is False
+    assert anh.wake_device() is True
 
 
 def test_anh_wake_device_calls_unlock_when_locked(monkeypatch):
-    monkeypatch.setattr(anh, "is_locked", lambda: True)
+    states = iter([True, False])  # locked → unlock → unlocked
+    monkeypatch.setattr(anh, "is_locked", lambda: next(states))
     called = {}
 
     def fake_appium(script, **kw):
