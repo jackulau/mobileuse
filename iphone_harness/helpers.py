@@ -1095,6 +1095,45 @@ def paste_text(text, predicate=None, index=0):
 
 # ---- screen recording ------------------------------------------------------
 
+import base64 as _base64
+
+def record_screen(duration=10, path=None, fps=10, quality="medium"):
+    """Record the device screen for `duration` seconds. Returns the host path.
+
+    Uses Appium's `mobile: startRecordingScreen` + `mobile: stopRecordingScreen`
+    (XCUITest backend), which returns base64-encoded MP4. We decode and write
+    to `path` (or a /tmp default).
+
+    Args:
+        duration: seconds to record (XCUITest caps at 1800s ≈ 30min)
+        path: host filesystem path; defaults to /tmp/iph-record-<ts>.mp4
+        fps: frame rate (default 10)
+        quality: 'low' | 'medium' | 'high' | 'photo'
+
+    Returns:
+        Path string of the saved .mp4 file.
+    """
+    if path is None:
+        path = str(ipc._TMP / f"iph-record-{int(time.time())}.mp4")
+    try:
+        appium("mobile: startRecordingScreen", timeLimit=int(duration) + 5,
+               videoFps=int(fps), videoQuality=quality)
+    except Exception as e:
+        raise RuntimeError(
+            f"start screen recording failed: {e}\n"
+            f"  Likely cause: XCUITest version doesn't support `mobile: startRecordingScreen`.\n"
+            f"  Try: `appium driver install --source=npm appium-xcuitest-driver@latest`."
+        )
+    time.sleep(duration)
+    try:
+        b64 = appium("mobile: stopRecordingScreen")
+    except Exception as e:
+        raise RuntimeError(f"stop screen recording failed: {e}")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
+
+
 def start_screen_recording():
     """Start a screen recording. Installs the CC tile if missing.
 

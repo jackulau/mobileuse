@@ -780,6 +780,80 @@ def annotated_screenshot(path=None, run_ocr=True):
     return annotated, result
 
 
+# ---- screen recording ------------------------------------------------------
+
+import base64 as _base64
+import subprocess as _subprocess
+
+def record_screen(duration=10, path=None, bit_rate="4M", size=None):
+    """Record the device screen for `duration` seconds. Returns the host path.
+
+    Uses Appium's `mobile: startRecordingScreen` (UIAutomator2 backend) which
+    wraps `adb shell screenrecord`. Returns base64-encoded MP4; we decode and
+    write locally. screenrecord caps each segment at 180s — for longer recordings
+    chain multiple calls.
+
+    Args:
+        duration: seconds to record (max 180)
+        path: host filesystem path; defaults to /tmp/anh-record-<ts>.mp4
+        bit_rate: e.g. '4M' (default), '8M' for higher quality
+        size: optional '<width>x<height>' for downscaling
+
+    Returns:
+        Path string of the saved .mp4 file.
+    """
+    if duration > 180:
+        raise RuntimeError(
+            f"adb screenrecord caps at 180s per segment; got {duration}.\n"
+            f"  For longer: call record_screen() multiple times and concat with ffmpeg."
+        )
+    if path is None:
+        path = str(ipc._TMP / f"anh-record-{int(time.time())}.mp4")
+    args = {"timeLimit": int(duration) + 5, "bitRate": bit_rate}
+    if size:
+        args["videoSize"] = size
+    try:
+        appium("mobile: startRecordingScreen", **args)
+    except Exception as e:
+        raise RuntimeError(
+            f"start screen recording failed: {e}\n"
+            f"  Likely cause: UIAutomator2 version doesn't support `mobile: startRecordingScreen`.\n"
+            f"  Try updating: `appium driver install --source=npm appium-uiautomator2-driver@latest`."
+        )
+    time.sleep(duration)
+    try:
+        b64 = appium("mobile: stopRecordingScreen")
+    except Exception as e:
+        raise RuntimeError(f"stop screen recording failed: {e}")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
+
+
+def start_screen_recording(bit_rate="4M", size=None):
+    """Start a non-blocking screen recording. Call stop_screen_recording() to finish.
+
+    For one-shot recording with a known duration, prefer `record_screen()`.
+    """
+    args = {"timeLimit": 600, "bitRate": bit_rate}
+    if size:
+        args["videoSize"] = size
+    appium("mobile: startRecordingScreen", **args)
+
+
+def stop_screen_recording(path=None):
+    """Stop a recording started with start_screen_recording. Returns host path.
+
+    The video is base64-encoded by Appium; we decode and save locally.
+    """
+    if path is None:
+        path = str(ipc._TMP / f"anh-record-{int(time.time())}.mp4")
+    b64 = appium("mobile: stopRecordingScreen")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
+
+
 # ---- agent-helpers hot-load ------------------------------------------------
 
 _agent_helpers_loaded = False
