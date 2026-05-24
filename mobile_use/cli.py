@@ -140,6 +140,7 @@ Usage:
   mobile-use --doctor                  diagnose all platforms
   mobile-use --ios --doctor            diagnose iOS only
   mobile-use --android --doctor        diagnose Android only
+  mobile-use ios sign-wda              re-sign WebDriverAgent (iOS setup blocker)
   mobile-use agent [--ios|--android]   persistent agent loop
   mobile-use export-training [FILE]   export training data to JSONL
   mobile-use training-stats           show training data summary
@@ -216,6 +217,11 @@ def main():
     if remaining and remaining[0] == "quickstart":
         from . import quickstart
         sys.exit(quickstart.main(remaining[1:], platform=platform))
+
+    # ios sign-wda — WDA signing helper (the #1 setup blocker)
+    if remaining and remaining[:2] == ["ios", "sign-wda"]:
+        from . import ios_wda
+        sys.exit(ios_wda.main(remaining[2:]))
 
     # Training data commands
     if remaining and remaining[0] == "export-training":
