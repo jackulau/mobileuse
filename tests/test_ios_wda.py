@@ -154,3 +154,94 @@ def test_matches_wda_app_id_suffix():
 def test_matches_wda_handles_empty_entitlements():
     assert ios_wda._matches_wda({}, "com.user.wda") is False
     assert ios_wda._matches_wda({"Entitlements": None}, "com.user.wda") is False
+
+
+def test_check_wda_built_returns_false_when_no_derived_data(tmp_path, monkeypatch):
+    fake_home = tmp_path
+    monkeypatch.setenv("HOME", str(fake_home))
+    built, detail = ios_wda.check_wda_built()
+    assert built is False
+    assert "DerivedData" in detail or "not on macOS" in detail
+
+
+def test_check_wda_built_returns_false_when_no_app(tmp_path, monkeypatch):
+    monkeypatch.setattr(ios_wda.sys, "platform", "darwin")
+    derived = tmp_path / "Library/Developer/Xcode/DerivedData"
+    derived.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    built, detail = ios_wda.check_wda_built()
+    assert built is False
+    assert "no WebDriverAgentRunner-Runner.app" in detail
+
+
+def test_check_wda_built_returns_true_when_app_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(ios_wda.sys, "platform", "darwin")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = tmp_path / "Library/Developer/Xcode/DerivedData/WebDriverAgent-abc/Build/Products/Debug-iphoneos/WebDriverAgentRunner-Runner.app"
+    app.mkdir(parents=True)
+    built, detail = ios_wda.check_wda_built()
+    assert built is True
+    assert "built at" in detail
+
+
+def test_build_main_help_returns_0(capsys):
+    rc = ios_wda.build_main(["--help"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "build-wda" in out
+    assert "--check" in out
+
+
+def test_build_main_check_returns_1_when_not_built(monkeypatch, capsys):
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (False, "no app"))
+    rc = ios_wda.build_main(["--check"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "not built" in out
+
+
+def test_build_main_check_returns_0_when_built(monkeypatch, capsys):
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (True, "built at WebDriverAgent-xxx"))
+    rc = ios_wda.build_main(["--check"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WDA build: built" in out
+
+
+def test_build_main_already_built_returns_0(monkeypatch, capsys):
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (True, "fresh"))
+    rc = ios_wda.build_main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "already built" in out.lower()
+
+
+def test_build_main_refuses_when_unsigned(monkeypatch, capsys):
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (False, "missing"))
+    monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("not_signed", "no profile"))
+    rc = ios_wda.build_main([])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "sign-wda" in out
+
+
+def test_build_wda_returns_error_when_project_missing(monkeypatch):
+    monkeypatch.setattr(ios_wda, "find_wda_project", lambda: None)
+    rc, output = ios_wda.build_wda()
+    assert rc == 1
+    assert "appium driver install xcuitest" in output
+
+
+def test_team_id_arg_empty_when_unset(monkeypatch):
+    monkeypatch.delenv("IPH_XCODE_ORG_ID", raising=False)
+    assert ios_wda._team_id_arg() == []
+
+
+def test_team_id_arg_propagates(monkeypatch):
+    monkeypatch.setenv("IPH_XCODE_ORG_ID", "ABCD123456")
+    assert ios_wda._team_id_arg() == ["DEVELOPMENT_TEAM=ABCD123456"]
+
+
+def test_bundle_id_arg_propagates(monkeypatch):
+    monkeypatch.setenv("IPH_WDA_BUNDLE_ID", "com.example.wda")
+    assert ios_wda._bundle_id_arg() == ["PRODUCT_BUNDLE_IDENTIFIER=com.example.wda"]

@@ -157,6 +157,139 @@ If build fails with a bundle-id collision:
 """
 
 
+def check_wda_built():
+    """Return (built, detail) — True if a WebDriverAgentRunner-Runner.app is in DerivedData.
+
+    Xcode builds land in ~/Library/Developer/Xcode/DerivedData/WebDriverAgent-*/Build/Products/.
+    We scan for the .app to know whether the user has built the test target at least once.
+    """
+    if sys.platform != "darwin":
+        return False, "not on macOS"
+    derived = Path("~/Library/Developer/Xcode/DerivedData").expanduser()
+    if not derived.exists():
+        return False, "no DerivedData dir (Xcode never run)"
+    candidates = list(derived.glob("WebDriverAgent-*/Build/Products/*/WebDriverAgentRunner-Runner.app"))
+    if not candidates:
+        return False, "no WebDriverAgentRunner-Runner.app under DerivedData"
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    age_days = (datetime.now().timestamp() - latest.stat().st_mtime) / 86400
+    return True, f"built at {latest.parent.name} ({age_days:.1f}d ago)"
+
+
+def _team_id_arg():
+    """Return DEVELOPMENT_TEAM=... if IPH_XCODE_ORG_ID is set, else empty list."""
+    tid = os.environ.get("IPH_XCODE_ORG_ID", "").strip()
+    return [f"DEVELOPMENT_TEAM={tid}"] if tid else []
+
+
+def _bundle_id_arg():
+    """Return PRODUCT_BUNDLE_IDENTIFIER=... if IPH_WDA_BUNDLE_ID is set."""
+    bid = os.environ.get("IPH_WDA_BUNDLE_ID", "").strip()
+    return [f"PRODUCT_BUNDLE_IDENTIFIER={bid}"] if bid else []
+
+
+def build_wda(udid=None, timeout=600):
+    """Build the WebDriverAgent test target. Returns (rc, output).
+
+    Uses `xcodebuild build-for-testing` so we don't need a connected device —
+    we just want the .app + .xctestrun to exist for Appium to install at runtime.
+    If a UDID is supplied, target that specific device; otherwise build for any iOS device.
+    """
+    project = find_wda_project()
+    if project is None:
+        return 1, "WebDriverAgent project not found — run `appium driver install xcuitest` first."
+
+    destination = f"id={udid}" if udid else "generic/platform=iOS"
+    cmd = [
+        "xcodebuild",
+        "build-for-testing",
+        "-project", str(project),
+        "-scheme", "WebDriverAgentRunner",
+        "-destination", destination,
+        "-allowProvisioningUpdates",
+        "CODE_SIGNING_ALLOWED=YES",
+        *_team_id_arg(),
+        *_bundle_id_arg(),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, timeout=timeout, capture_output=True, text=True,
+        )
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"xcodebuild timed out after {timeout}s"
+    except FileNotFoundError:
+        return 1, "xcodebuild not found — install Xcode (not just CLT)"
+
+
+def build_main(argv):
+    """Entry: mobile-use ios build-wda [--check]
+
+    Build the WebDriverAgent test target so Appium can install it on the device
+    on first run. This is the manual step in SETUP.md Part A4 — automated.
+    """
+    if any(a in {"-h", "--help"} for a in argv):
+        print(
+            "mobile-use ios build-wda [--check] [--udid UDID]\n\n"
+            "Build the WebDriverAgent test target. Required once before the first\n"
+            "Appium session can install WDA on the iPhone. This automates SETUP.md\n"
+            "Part A4 (the manual Xcode project open + Cmd+U).\n\n"
+            "Prerequisites:\n"
+            "  - Xcode installed (App Store, ~10 GB)\n"
+            "  - WDA signed: mobile-use ios sign-wda  (or sign-wda --check)\n"
+            "  - IPH_XCODE_ORG_ID set (your Apple Team ID; from .env)\n\n"
+            "Options:\n"
+            "  --check        Exit 0 if WDA is already built, 1 otherwise.\n"
+            "  --udid UDID    Build targeted at a specific device UDID.\n"
+        )
+        return 0
+
+    check_only = "--check" in argv
+    udid = None
+    for i, a in enumerate(argv):
+        if a == "--udid" and i + 1 < len(argv):
+            udid = argv[i + 1]
+
+    built, detail = check_wda_built()
+    print(f"WDA build: {'built' if built else 'not built'}  ({detail})")
+
+    if check_only:
+        return 0 if built else 1
+
+    if built:
+        print("Nothing to do — WDA is already built.")
+        print("Force a rebuild: rm -rf ~/Library/Developer/Xcode/DerivedData/WebDriverAgent-*")
+        return 0
+
+    sign_state, sign_detail = check_wda_signing()
+    if sign_state != "signed":
+        print(f"\nWDA is not signed ({sign_state}: {sign_detail}).")
+        print("Run `mobile-use ios sign-wda` first, then re-run this command.")
+        return 1
+
+    udid = udid or os.environ.get("IPH_UDID", "").strip() or None
+    target = f"device {udid}" if udid else "generic iOS"
+    print(f"\nBuilding WebDriverAgent for {target} (this can take several minutes)...")
+
+    rc, output = build_wda(udid=udid)
+    if rc == 0:
+        print("Build succeeded.")
+        built2, detail2 = check_wda_built()
+        print(f"Verify: {detail2}")
+        return 0
+
+    print(f"\nBuild FAILED (rc={rc}). Last 40 lines of xcodebuild output:")
+    for line in output.splitlines()[-40:]:
+        print(f"  {line}")
+    print(
+        "\nCommon fixes:\n"
+        "  - Bundle ID collision → change IPH_WDA_BUNDLE_ID (see SETUP.md A4)\n"
+        "  - Provisioning failed → re-open Xcode, retry sign-wda\n"
+        "  - Code-signing identity missing → Xcode → Settings → Accounts → add Apple ID\n"
+    )
+    return rc
+
+
 def main(argv):
     """Entry: mobile-use ios sign-wda [--check]"""
     if any(a in {"-h", "--help"} for a in argv):
