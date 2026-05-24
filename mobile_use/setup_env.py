@@ -124,8 +124,18 @@ def build_env(existing=None, devices=None, *, ios=True, android=True,
             if yes:
                 fill("IPH_XCODE_ORG_ID", defaults.get("IPH_XCODE_ORG_ID", ""))
             else:
+                if sys.stdin.isatty():
+                    print()
+                    print("IPH_XCODE_ORG_ID — your Apple Team ID (10 chars, e.g. ABCDE12345)")
+                    print("  How to find it:")
+                    print("    1. Open Keychain Access (Spotlight: Keychain)")
+                    print("    2. Login keychain → My Certificates")
+                    print("    3. Expand 'Apple Development: <your name>' → double-click cert")
+                    print("    4. Get Info → 'Organizational Unit' field is the 10-char Team ID")
+                    print("  Or in Xcode: Settings → Accounts → select Apple ID → Manage Certificates")
+                    print("  Full walkthrough: SETUP.md Part A3")
                 fill("IPH_XCODE_ORG_ID",
-                     _prompt("IPH_XCODE_ORG_ID (10-char Apple Team ID — Keychain → cert → Get Info)",
+                     _prompt("IPH_XCODE_ORG_ID",
                               default=""))
 
         if not has_real_value(out, "IPH_WDA_BUNDLE_ID"):

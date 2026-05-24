@@ -54,6 +54,26 @@ def _detect_platform():
     return None  # nothing connected
 
 
+def _check_env_for_platform(platform):
+    """Pre-flight: warn if .env hasn't been initialized for the chosen platform.
+
+    Returns None if OK, otherwise an actionable error message ready to surface.
+    """
+    key = "IPH_UDID" if platform == "ios" else "ANH_UDID"
+    if os.environ.get(key, "").strip():
+        return None
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_path = os.path.join(repo_root, ".env")
+    alt_path = os.path.join(repo_root, "agent-workspace", ".env")
+    if not os.path.exists(env_path) and not os.path.exists(alt_path):
+        return (
+            f"No .env file found and {key} not set in environment.\n"
+            f"   Fix: run `mobile-use init` (auto-fills from connected device).\n"
+            f"   Or set {key}=<udid> manually before running."
+        )
+    return None
+
+
 def _run_ios(args):
     """Delegate to iphone-harness."""
     from iphone_harness.admin import ensure_daemon, restart_daemon, run_doctor
@@ -70,6 +90,10 @@ def _run_ios(args):
         return
     if args[0] != "-c" or len(args) < 2:
         sys.exit('Usage: mobile-use --ios -c "print(active_app())"')
+
+    env_err = _check_env_for_platform("ios")
+    if env_err:
+        sys.exit(env_err)
 
     try:
         ensure_daemon()
@@ -108,6 +132,10 @@ def _run_android(args):
         return
     if args[0] != "-c" or len(args) < 2:
         sys.exit('Usage: mobile-use --android -c "print(active_app())"')
+
+    env_err = _check_env_for_platform("android")
+    if env_err:
+        sys.exit(env_err)
 
     try:
         ensure_daemon()

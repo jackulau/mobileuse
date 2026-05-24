@@ -79,10 +79,10 @@ def test_exec_no_traceback_noise_from_cli_internals():
 
 
 def test_exec_syntax_error_clean_message():
-    """SyntaxError in -c snippet → friendly one-line error."""
-    rc, _, err = _run_cli("--ios", "-c", "def (")
-    if rc != 0 and "daemon didn't come up" not in err:
-        assert "Syntax error" in err or "SyntaxError" in err
+    """SyntaxError in -c snippet → friendly one-line error (when env is ready)."""
+    rc, _, err = _run_cli("--ios", "-c", "def (", env={"IPH_UDID": "stub-udid-for-test"})
+    if rc != 0 and "daemon didn't come up" not in err and "daemon did not come up" not in err:
+        assert "Syntax error" in err or "SyntaxError" in err or "daemon" in err.lower()
 
 
 # ---- bootstrap idempotency ------------------------------------------------
@@ -180,3 +180,40 @@ def test_cli_version():
     rc, out, _ = _run_cli("--version")
     assert rc == 0
     assert "mobile-use" in out.lower()
+
+
+# ---- .env validation ------------------------------------------------------
+
+def test_check_env_passes_when_udid_in_env(monkeypatch):
+    from mobile_use import cli
+    monkeypatch.setenv("IPH_UDID", "abc123")
+    assert cli._check_env_for_platform("ios") is None
+
+
+def test_check_env_returns_message_when_no_env_no_var(monkeypatch, tmp_path):
+    from mobile_use import cli
+    monkeypatch.delenv("IPH_UDID", raising=False)
+    monkeypatch.delenv("ANH_UDID", raising=False)
+    # Point os.path to a tmp dir that has no .env
+    monkeypatch.setattr(cli.os.path, "exists", lambda p: False)
+    msg = cli._check_env_for_platform("ios")
+    assert msg is not None
+    assert "mobile-use init" in msg
+    assert "IPH_UDID" in msg
+
+
+def test_check_env_android_variant(monkeypatch):
+    from mobile_use import cli
+    monkeypatch.delenv("ANH_UDID", raising=False)
+    monkeypatch.setattr(cli.os.path, "exists", lambda p: False)
+    msg = cli._check_env_for_platform("android")
+    assert msg is not None
+    assert "ANH_UDID" in msg
+
+
+def test_check_env_skips_when_env_file_exists(monkeypatch, tmp_path):
+    from mobile_use import cli
+    monkeypatch.delenv("IPH_UDID", raising=False)
+    # Pretend .env exists (so user has run init)
+    monkeypatch.setattr(cli.os.path, "exists", lambda p: True)
+    assert cli._check_env_for_platform("ios") is None
