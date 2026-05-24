@@ -18,6 +18,71 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
+
+APPIUM_URL = os.environ.get("IPH_APPIUM_URL") or os.environ.get("ANH_APPIUM_URL") or "http://127.0.0.1:4723"
+
+
+def appium_reachable(url=None, timeout=1.5):
+    """True if the Appium server responds on /status. False on any error."""
+    url = (url or APPIUM_URL).rstrip("/") + "/status"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status == 200
+    except (urllib.error.URLError, ConnectionError, OSError):
+        return False
+    except Exception:
+        return False
+
+
+def run_appium_phase(*, autostart=False):
+    """Preflight: check Appium server is up at 4723. Returns (ok, msg).
+
+    If `autostart=True` and Appium isn't reachable but the CLI is installed,
+    spawn `appium --base-path /` detached and re-check. Otherwise print the
+    exact command the user needs to run.
+    """
+    if appium_reachable():
+        return True, f"Appium server reachable at {APPIUM_URL}"
+
+    appium_cli = shutil.which("appium")
+    if appium_cli is None:
+        return False, (
+            "Appium server not reachable AND `appium` CLI not installed.\n"
+            "   Fix: run `mobile-use bootstrap` to install Appium + drivers."
+        )
+
+    if not autostart:
+        return False, (
+            f"Appium server not running on {APPIUM_URL}.\n"
+            "   Fix: open a separate terminal and run:\n"
+            "     appium --base-path /\n"
+            "   Or re-run quickstart with --autostart-appium to spawn it for you."
+        )
+
+    # Try to start it. Detach so we don't block on its lifetime.
+    log_path = os.path.join("/tmp", "mobile-use-appium.log")
+    try:
+        with open(log_path, "ab") as log:
+            subprocess.Popen(
+                [appium_cli, "--base-path", "/"],
+                stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except Exception as e:
+        return False, f"failed to start Appium: {e}"
+
+    # Wait up to ~6s for it to come up.
+    import time
+    for _ in range(12):
+        time.sleep(0.5)
+        if appium_reachable():
+            return True, f"Appium server started (log: {log_path})"
+    return False, (
+        f"Spawned Appium but it didn't become reachable in 6s.\n"
+        f"   Check {log_path} for errors."
+    )
 
 
 def _detect_platform():
@@ -98,6 +163,8 @@ def main(argv=None, *, platform=None):
     p.add_argument("--android", action="store_const", const="android", dest="platform")
     p.add_argument("--skip-doctor", action="store_true",
                    help="Jump straight to the smoke test.")
+    p.add_argument("--autostart-appium", action="store_true",
+                   help="If Appium server is down, spawn it in the background.")
     args = p.parse_args(argv)
 
     platform = platform or args.platform or _detect_platform()
@@ -110,6 +177,13 @@ def main(argv=None, *, platform=None):
 
     print(f"mobile-use quickstart  ({platform})")
     print("=" * 60)
+
+    print(f"[preflight] Appium server on {APPIUM_URL}")
+    ok, msg = run_appium_phase(autostart=args.autostart_appium)
+    print(f"  {msg}")
+    if not ok:
+        print(f"\n[abort] {msg}")
+        return 1
 
     if not args.skip_doctor:
         ok, msg = run_doctor_phase(platform)
