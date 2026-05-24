@@ -38,6 +38,8 @@ If anything fails:
 mobile-use --doctor               # numbered checks with one-line remediations
 iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
 mobile-use ios sign-wda           # iOS: re-sign WebDriverAgent (the #1 setup blocker)
+mobile-use ios build-wda          # iOS: build the WDA test target (first-run setup)
+mobile-use quickstart --autostart-appium   # spawn Appium server in background
 ```
 
 See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, including a
@@ -365,6 +367,13 @@ paste_text(text, ...)
 # Device
 unlock()
 
+# Navigation (both platforms — Android native buttons, iOS gesture equivalents)
+press_home()                             # both — go to home screen
+press_back()                             # Android: back key; iOS: swipe-from-left edge
+press_recents()                          # Android: recents; iOS: app switcher
+swipe_back()                             # iOS: explicit edge-swipe (alias for press_back on iOS)
+open_app_switcher()                      # iOS: swipe up + pause
+
 # iOS-only
 native_screenshot()                      # saves to iPhone Photos
 set_assistive_touch(on=True)
@@ -375,9 +384,6 @@ start_screen_recording()
 stop_screen_recording()
 
 # Android-only
-press_back()
-press_home()
-press_recents()
 open_notifications()
 close_notifications()
 grant_permission(package, permission)
