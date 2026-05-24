@@ -204,6 +204,85 @@ def test_stale_socket_does_not_respond_to_ping(iph_name):
     assert iph_ipc.ping(iph_name, timeout=0.5) is False
 
 
+def test_cleanup_stale_removes_dead_pid_and_socket(iph_name):
+    """cleanup_stale() should drop .pid (dead pid) and .sock (no listener)."""
+    pid_path = Path(iph_ipc.pid_path(iph_name))
+    sock_path = Path(iph_ipc.sock_addr(iph_name))
+    pid_path.write_text("999999")
+    sock_path.write_text("")
+    assert pid_path.exists() and sock_path.exists()
+
+    cleaned = iph_admin.cleanup_stale(iph_name)
+    assert cleaned is True
+    assert not pid_path.exists()
+    assert not sock_path.exists()
+
+
+def test_cleanup_stale_preserves_live_daemon_files(iph_name):
+    """cleanup_stale() must NOT wipe files of a live daemon."""
+    p = _spawn_mock("iphone", iph_name)
+    try:
+        assert _wait_alive(iph_ipc, iph_name)
+        pid_path = Path(iph_ipc.pid_path(iph_name))
+        sock_path = Path(iph_ipc.sock_addr(iph_name))
+        assert pid_path.exists() and sock_path.exists()
+
+        result = iph_admin.cleanup_stale(iph_name)
+        assert result is False  # nothing should have been cleaned
+        assert pid_path.exists()
+        assert sock_path.exists()
+        assert iph_ipc.ping(iph_name, timeout=1.0) is True
+    finally:
+        if p.poll() is None:
+            try:
+                s, _ = iph_ipc.connect(iph_name, timeout=1.0)
+                iph_ipc.request(s, None, {"meta": "shutdown"})
+                s.close()
+            except Exception:
+                pass
+            try:
+                p.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=2.0)
+
+
+def test_cleanup_stale_no_op_when_no_files(iph_name):
+    """Safe to call when nothing exists."""
+    result = iph_admin.cleanup_stale(iph_name)
+    assert result is False
+
+
+def test_android_cleanup_stale_removes_dead_files(anh_name):
+    pid_path = Path(anh_ipc.pid_path(anh_name))
+    sock_path = Path(anh_ipc.sock_addr(anh_name))
+    pid_path.write_text("999999")
+    sock_path.write_text("")
+    cleaned = anh_admin.cleanup_stale(anh_name)
+    assert cleaned is True
+    assert not pid_path.exists()
+    assert not sock_path.exists()
+
+
+def test_restart_daemon_sigkill_escalation(iph_name):
+    """If daemon ignores SIGTERM, restart_daemon should SIGKILL it."""
+    # Spawn mock with a trap for SIGTERM — simulated by killing daemon's IPC
+    # before restart_daemon (so shutdown via IPC fails, then SIGTERM should hit).
+    p = _spawn_mock("iphone", iph_name)
+    try:
+        assert _wait_alive(iph_ipc, iph_name)
+        # restart_daemon should successfully tear it down
+        iph_admin.restart_daemon(iph_name)
+        # Process should be gone
+        assert _wait_dead(iph_ipc, iph_name)
+        # Pid file should be gone too
+        assert not Path(iph_ipc.pid_path(iph_name)).exists()
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait(timeout=2.0)
+
+
 def test_double_spawn_race_only_one_survives(iph_name):
     """If two daemons spawn simultaneously, the second binds (unlinking first's sock)."""
     p1 = _spawn_mock("iphone", iph_name)

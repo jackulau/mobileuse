@@ -95,6 +95,8 @@ def ensure_daemon(wait=30.0, name=None, env=None):
             pass
         restart_daemon(name)
 
+    cleanup_stale(name)
+
     e = {**os.environ, **({"ANH_NAME": name} if name else {}), **(env or {})}
     # ANH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
     module = e.get("ANH_DAEMON_MODULE", "android_harness.daemon")
@@ -151,7 +153,16 @@ def restart_daemon(name=None):
             os.kill(daemon_pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
-        time.sleep(0.5)
+        deadline = time.time() + 2.0
+        while time.time() < deadline and _pid_alive(daemon_pid):
+            time.sleep(0.1)
+
+    if daemon_pid and _pid_alive(daemon_pid):
+        try:
+            os.kill(daemon_pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        time.sleep(0.2)
 
     try: os.unlink(pid_path)
     except FileNotFoundError: pass
