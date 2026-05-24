@@ -51,8 +51,10 @@ def ensure_daemon(wait=30.0, name=None, env=None):
         restart_daemon(name)
 
     e = {**os.environ, **({"IPH_NAME": name} if name else {}), **(env or {})}
+    # IPH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
+    module = e.get("IPH_DAEMON_MODULE", "iphone_harness.daemon")
     p = subprocess.Popen(
-        [sys.executable, "-m", "iphone_harness.daemon"],
+        [sys.executable, "-m", module],
         env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         **ipc.spawn_kwargs(),
     )

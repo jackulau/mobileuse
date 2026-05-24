@@ -41,8 +41,10 @@ def ensure_daemon(wait=30.0, name=None, env=None):
         restart_daemon(name)
 
     e = {**os.environ, **({"ANH_NAME": name} if name else {}), **(env or {})}
+    # ANH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
+    module = e.get("ANH_DAEMON_MODULE", "android_harness.daemon")
     p = subprocess.Popen(
-        [sys.executable, "-m", "android_harness.daemon"],
+        [sys.executable, "-m", module],
         env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         **ipc.spawn_kwargs(),
     )
