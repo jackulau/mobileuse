@@ -208,3 +208,86 @@ def test_e2e_no_regressions_in_helpers_public_api():
     for name in ("tap_at_xy", "tap", "swipe", "type_text", "screenshot",
                  "wake_device", "is_locked", "retry_on_disconnect", "record_screen"):
         assert hasattr(anh, name), f"android_harness.helpers missing {name}"
+
+
+# ---- -c end-to-end via subprocess + mock daemon ----------------------------
+
+def test_e2e_minus_c_runs_against_mock_daemon(isolated_name, tmp_path):
+    """`mobile-use --ios -c 'expr'` against mock daemon — full pipeline."""
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT),
+        "IPH_NAME": isolated_name,
+        "IPH_DAEMON_MODULE": "tests._mock_iphone_daemon",
+        "IPH_UDID": "mock-udid-stub",
+    }
+    snippet = "print('active=' + str(active_app()))"
+    result = subprocess.run(
+        [sys.executable, "-m", "mobile_use.cli", "--ios", "-c", snippet],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        timeout=20.0,
+        env=env,
+    )
+    out = result.stdout.decode()
+    err = result.stderr.decode()
+    assert result.returncode == 0, f"non-zero rc={result.returncode}\nstdout: {out}\nstderr: {err}"
+    assert "active=" in out
+    assert "SpringBoard" in out or "bundleId" in out
+
+    # Teardown the daemon we just spawned
+    from iphone_harness import admin, _ipc as ipc
+    admin.restart_daemon(isolated_name)
+    deadline = time.time() + 5.0
+    while time.time() < deadline and ipc.ping(isolated_name, timeout=0.3):
+        time.sleep(0.1)
+
+
+def test_e2e_minus_c_android_runs_against_mock_daemon(isolated_name):
+    """`mobile-use --android -c 'expr'` against mock daemon."""
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT),
+        "ANH_NAME": isolated_name,
+        "ANH_DAEMON_MODULE": "tests._mock_android_daemon",
+        "ANH_UDID": "mock-android-stub",
+    }
+    snippet = "print('shot=' + str(screenshot()))"
+    result = subprocess.run(
+        [sys.executable, "-m", "mobile_use.cli", "--android", "-c", snippet],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        timeout=20.0,
+        env=env,
+    )
+    out = result.stdout.decode()
+    err = result.stderr.decode()
+    assert result.returncode == 0, f"non-zero rc={result.returncode}\nstdout: {out}\nstderr: {err}"
+    assert "shot=" in out
+
+    from android_harness import admin, _ipc as ipc
+    admin.restart_daemon(isolated_name)
+    deadline = time.time() + 5.0
+    while time.time() < deadline and ipc.ping(isolated_name, timeout=0.3):
+        time.sleep(0.1)
+
+
+def test_e2e_minus_c_surfaces_env_error_when_no_env_no_udid(tmp_path):
+    """Without .env AND without UDID, `-c` should refuse with friendly message."""
+    env = {
+        "PYTHONPATH": str(REPO_ROOT),
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        # IPH_UDID intentionally NOT set
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "mobile_use.cli", "--ios", "-c", "print(1)"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        timeout=10.0,
+        env=env,
+    )
+    # Either env preflight catches it (rc=1) or it gets to daemon and fails
+    # The important thing: stderr mentions IPH_UDID OR mobile-use init OR daemon
+    err = result.stderr.decode() + result.stdout.decode()
+    assert any(s in err for s in ("IPH_UDID", "mobile-use init", "daemon", ".env"))
