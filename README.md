@@ -37,10 +37,36 @@ If anything fails:
 ```bash
 mobile-use --doctor               # numbered checks with one-line remediations
 iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
+mobile-use ios sign-wda           # iOS: re-sign WebDriverAgent (the #1 setup blocker)
 ```
 
-See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, or skip to the
-sections below for usage.
+See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, including a
+[troubleshooting decision tree](SETUP.md#part-c--troubleshooting). Linux users:
+the Android path works out-of-the-box on apt/dnf/pacman systems (iOS still needs
+macOS + Xcode).
+
+### Runtime helpers (no device pain)
+
+```python
+from iphone_harness.helpers import wake_device, retry_on_disconnect, record_screen
+
+wake_device()                              # screen-off / locked? wake it.
+
+@retry_on_disconnect(max_attempts=3)        # USB blip / WDA crash → auto-restart + retry
+def run_script():
+    tap(find(label="Compose"))
+    type_text("hello")
+
+record_screen(duration=10)                  # save mp4 to /tmp (XCUITest + UIAutomator2)
+
+# record/replay a tap sequence:
+from mobile_use import record_replay
+import iphone_harness.helpers as h
+record_replay.start_recording("flow.py", helpers=h)
+# ... your taps/swipes/typing ...
+record_replay.stop_recording()              # writes runnable flow.py
+record_replay.replay("flow.py")             # play it back
+```
 
 ### Manual setup (skip if `mobile-use bootstrap` worked)
 

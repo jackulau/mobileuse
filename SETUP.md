@@ -245,6 +245,44 @@ for el in ui_tree(visible_only=True)[:5]:
 
 # Part C — Troubleshooting
 
+## Decision tree — most common failures
+
+```
+Something broke.
+│
+├── First: run `mobile-use --doctor` — shows the bad check + a one-line fix.
+│
+├── "daemon unreachable" / "stale session"
+│   └── → `iphone-harness --reload` (or `android-harness --reload`).
+│       Restart Appium too if the issue persists.
+│
+├── iOS: "xcodebuild failed with code 65"
+│   └── → WDA signing. Run `mobile-use ios sign-wda`.
+│       Free Apple account? Re-sign weekly (profile expires every 7 days).
+│
+├── iOS: "Tunnel registry port not found"
+│   └── → xcuitest 11.x bug. Pin to 10.43.1:
+│       `appium driver install --source=npm appium-xcuitest-driver@10.43.1`
+│
+├── Android: "device not found" / "unauthorized"
+│   └── → unplug, replug, tap **Allow** on the phone.
+│       Verify with `adb devices`.
+│
+├── "USB disconnect during script"
+│   └── → Wrap your script with `@retry_on_disconnect(max_attempts=3)`.
+│       Plug into a powered USB hub instead of a laptop port if it keeps happening.
+│
+├── "device locked" / "screen off"
+│   └── → Call `wake_device()` at the top of your script.
+│
+├── Tests pass but real run fails
+│   └── → Daemon is stuck. `rm /tmp/iph-*.sock /tmp/iph-*.pid` (iOS) or
+│       `rm /tmp/anh-*.sock /tmp/anh-*.pid` (Android), then re-run.
+│
+└── Everything else
+    └── → `mobile-use --doctor` then read SETUP.md for that step.
+```
+
 ## iOS
 
 - **`xcodebuild failed with code 65`**: check Appium server log — usually untrusted cert, missing provisioning, or missing device support files.
