@@ -1,0 +1,54 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# System deps: python, pip, build tools, adb (the canonical Linux Android tool),
+# node + npm (for the Appium CLI if the user wants to install it later),
+# and libimobiledevice tools (idevice_id — for iOS pairing if the user ever
+# bridges to a remote Mac).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        android-tools-adb \
+        nodejs npm \
+        libimobiledevice6 libimobiledevice-utils usbmuxd \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY pyproject.toml ./
+COPY mobile_use mobile_use
+COPY iphone_harness iphone_harness
+COPY android_harness android_harness
+COPY tests tests
+COPY docs docs
+COPY README.md SETUP.md AGENTS.md ./
+
+# Editable install picks up our package + sets up CLI entry points.
+# --break-system-packages: Ubuntu 24.04's python is PEP 668 marked-external;
+# this is a single-purpose throwaway test container, so loosening that is fine.
+RUN pip install --break-system-packages -e . \
+    && pip install --break-system-packages pytest
+
+# Sanity: prove imports work on Linux without pyobjc.
+RUN python3 -c "from mobile_use._platform import is_linux, host_os_label; \
+                assert is_linux(); print('Container host:', host_os_label())"
+
+# Linux-focused unit set — proves the platform abstraction, doctor remediation,
+# OCR fallback, bootstrap, CLI, and remote-Appium plumbing all work on Linux
+# without macOS deps. Override with e.g.:
+#   docker run --rm mobile-use-linux-test:goal008 python3 -m pytest -q
+#   docker run --rm mobile-use-linux-test:goal008 mobile-use --doctor
+CMD ["python3", "-m", "pytest", "-q", \
+     "tests/test_platform.py", \
+     "tests/test_bootstrap.py", \
+     "tests/test_bootstrap_linux.py", \
+     "tests/test_doctor_linux.py", \
+     "tests/test_ocr_platform.py", \
+     "tests/test_cli_linux.py", \
+     "tests/test_ios_remote_linux.py", \
+     "tests/test_ipc_tcp.py", \
+     "tests/test_remote_daemon.py", \
+     "tests/test_hardening.py", \
+     "tests/test_imports.py"]

@@ -68,7 +68,11 @@ def test_dry_run_does_not_invoke_subprocess(capsys, monkeypatch):
 
 def test_run_returns_0_when_everything_installed(monkeypatch, capsys):
     from mobile_use import bootstrap
-    monkeypatch.setattr(bootstrap, "_have", _stub_have({"brew", "node", "npm", "appium", "xcodebuild"}))
+    # Stub every "present?" check to True regardless of host: the test is
+    # the macOS+Linux happy path where every dep is already installed.
+    # `adb` is included so the Linux-branch plan also sees it as OK.
+    monkeypatch.setattr(bootstrap, "_have",
+                        _stub_have({"brew", "node", "npm", "appium", "xcodebuild", "adb"}))
     monkeypatch.setattr(bootstrap, "_have_xcode", lambda: True)
     monkeypatch.setattr(bootstrap, "_brew_has", lambda pkg: True)
     monkeypatch.setattr(bootstrap, "_appium_driver_installed", lambda name: True)

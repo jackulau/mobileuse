@@ -93,16 +93,27 @@ def linux_pkg_manager():
     zypper_like = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "sles", "suse"}
     apk_like = {"alpine"}
 
-    if ids & apt_like or shutil.which("apt"):
-        return "apt"
-    if ids & dnf_like or shutil.which("dnf"):
-        return "dnf"
-    if ids & pacman_like or shutil.which("pacman"):
-        return "pacman"
-    if ids & zypper_like or shutil.which("zypper"):
-        return "zypper"
-    if ids & apk_like or shutil.which("apk"):
-        return "apk"
+    # /etc/os-release wins when present — it's the authoritative source. PATH
+    # lookup is only a fallback for hosts with no /etc/os-release at all.
+    # (Bug: a Fedora dev who happened to install apt as a downloader would
+    #  otherwise be classified as apt-based.)
+    if ids:
+        if ids & apt_like:
+            return "apt"
+        if ids & dnf_like:
+            return "dnf"
+        if ids & pacman_like:
+            return "pacman"
+        if ids & zypper_like:
+            return "zypper"
+        if ids & apk_like:
+            return "apk"
+        return None  # known os-release but unrecognized — better None than wrong
+
+    # No usable os-release → fall back to PATH-order detection.
+    for mgr in ("apt", "dnf", "pacman", "zypper", "apk"):
+        if shutil.which(mgr):
+            return mgr
     return None
 
 
@@ -152,7 +163,7 @@ LINUX_LIBIMOBILEDEVICE_PKGS = {
 _UNSET = object()
 
 
-def linux_install_cmd(pkgs_per_manager, manager=None, prefix=_UNSET):
+def linux_install_cmd(pkgs_per_manager, manager=_UNSET, prefix=_UNSET):
     """Build the install argv for the current Linux distro, or None.
 
     `pkgs_per_manager` maps manager name → list[str] of package names. Use
@@ -174,7 +185,11 @@ def linux_install_cmd(pkgs_per_manager, manager=None, prefix=_UNSET):
         argv = linux_install_cmd(LINUX_ADB_PKGS)
         # ['sudo', 'apt', 'install', '-y', 'android-tools-adb']
     """
-    pm = manager or linux_pkg_manager()
+    if manager is _UNSET:
+        pm = linux_pkg_manager()
+    else:
+        # Explicit None from caller = "I asked, there's no manager" — honor it.
+        pm = manager
     if pm is None or pm not in pkgs_per_manager:
         return None
     if prefix is _UNSET:
