@@ -144,7 +144,7 @@ def plan(ios=True, android=True):
                       lambda: _have("brew") or not is_macos(),
                       None,  # cannot auto-install brew; print message
                       True))
-        steps.append(("brew install libimobiledevice (idevice_id, ideviceinstaller)",
+        steps.append(("libimobiledevice (idevice_id, ideviceinstaller) — Homebrew on macOS",
                       lambda: _brew_has("libimobiledevice"),
                       ["brew", "install", "libimobiledevice", "ideviceinstaller"],
                       True))
@@ -155,7 +155,7 @@ def plan(ios=True, android=True):
                           _linux_adb_install_cmd(),
                           False))
         else:
-            steps.append(("brew install android-platform-tools (adb)",
+            steps.append(("Android Platform Tools (adb) — Homebrew on macOS",
                           lambda: _brew_has("android-platform-tools") or _have("adb"),
                           ["brew", "install", "android-platform-tools"],
                           True))

@@ -24,7 +24,9 @@ def test_plan_includes_ios_and_android_by_default():
     assert "xcuitest" in labels
     assert "uiautomator2" in labels
     assert "libimobiledevice" in labels
-    assert "android-platform-tools" in labels
+    # Android step label varies by host (Linux: "Android Platform Tools (adb) — Linux"
+    # vs macOS: "Android Platform Tools (adb) — Homebrew on macOS"); match the stem.
+    assert "Android Platform Tools" in labels or "adb" in labels.lower()
 
 
 def test_plan_excludes_android_when_ios_only():
@@ -32,7 +34,8 @@ def test_plan_excludes_android_when_ios_only():
     steps = bootstrap.plan(ios=True, android=False)
     labels = " ".join(label for label, *_ in steps)
     assert "uiautomator2" not in labels
-    assert "android-platform-tools" not in labels
+    assert "Android Platform Tools" not in labels
+    assert "adb" not in labels.lower()
     assert "xcuitest" in labels
 
 
