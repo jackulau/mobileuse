@@ -227,6 +227,33 @@ def screenshot(path=None):
     return r["path"]
 
 
+# ---- live screen stream (consumed by viewer/server.py) --------------------
+
+def screen_stream_start(fps=6, quality=60, max_dim=800):
+    """Start the daemon's screen-capture loop. Returns daemon's reply dict."""
+    _drop_conn()
+    r = _send({
+        "method": "screen_stream_start",
+        "params": {"fps": fps, "quality": quality, "max_dim": max_dim},
+    })
+    return r.get("result", {"running": False})
+
+
+def screen_stream_frame():
+    """Pull the latest JPEG frame from the daemon. Drops cached socket first
+    since the daemon closes the conn per reply (silent empty otherwise)."""
+    _drop_conn()
+    r = _send({"method": "screen_stream_frame", "params": {}}, timeout=10.0)
+    return r.get("result", {"ready": False, "frame_no": 0})
+
+
+def screen_stream_stop():
+    """Cancel the daemon's capture loop. Idempotent."""
+    _drop_conn()
+    r = _send({"method": "screen_stream_stop", "params": {}})
+    return r.get("result", {"running": False})
+
+
 def window_size():
     """Logical screen size: {'width': W, 'height': H}.
     These are the units tap_at_xy(x, y) expects.

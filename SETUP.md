@@ -112,6 +112,99 @@ iphone-harness -c 'print(active_app())'
 
 ---
 
+# Part A* — iOS from Windows / Linux (remote Mac bridge)
+
+Windows and Linux cannot build or sign WebDriverAgent locally — `xcodebuild`
+and Apple codesigning are macOS-only. The path is to keep one Mac on the
+network as the "iOS bridge" and drive it remotely via TCP. The mobile-use
+client running on Windows/Linux talks to the daemon on the Mac; the Mac
+talks to the iPhone via Appium + WDA exactly as in Part A.
+
+### One-time setup on the Mac
+
+Follow Part A above on the Mac (Xcode, libimobiledevice, Appium, WDA signing,
+.env with IPH_UDID/IPH_XCODE_ORG_ID/IPH_WDA_BUNDLE_ID).
+
+Verify it works on the Mac itself before adding network in the mix:
+
+```bash
+iphone-harness -c 'print(active_app())'
+```
+
+### Each session on the Mac
+
+Start the daemon bound to TCP loopback (preferred — pair with SSH tunnel) OR
+to all interfaces (faster setup, less secure — see security caveat below).
+
+Loopback + SSH tunnel (recommended):
+
+```bash
+# On the Mac:
+IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'  # starts daemon, exits client
+# Daemon keeps running. Re-running 'iphone-harness -c' attaches to it.
+```
+
+All-interfaces (skip SSH, faster — security warning printed to stderr):
+
+```bash
+IPH_BIND=tcp://0.0.0.0:8763 iphone-harness -c 'pass'
+```
+
+### On Windows or Linux
+
+```bash
+pip install mobile-use   # Android-only deps; iOS daemon never runs locally
+
+# Open SSH tunnel in another terminal (skip if Mac is bound to 0.0.0.0):
+ssh -L 8763:127.0.0.1:8763 user@mac.local
+
+# Drive iOS:
+mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c 'print(active_app())'
+
+# Or with the headed viewer in the browser:
+mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 --headed -c 'print(active_app())'
+```
+
+### How it works
+
+- `IPH_BIND=tcp://...` on the Mac switches the daemon's IPC from AF_UNIX
+  to TCP. AF_UNIX is unchanged when IPH_BIND is unset.
+- `--remote-daemon tcp://...` on the client sets `IPH_CONNECT` and flips
+  the harness into **client-only mode**: `ensure_daemon` never tries to
+  spawn a local daemon; it pings the remote, raises a remediation
+  checklist if unreachable.
+- The daemon over TCP serves the same JSON-line RPC protocol as over
+  AF_UNIX — no new methods, no protocol break. Everything that works
+  locally works remotely.
+
+### Security caveat
+
+The RPC is **unauthenticated**. Anything that can connect to the daemon's
+port can drive the phone. Mitigations:
+
+- Bind 127.0.0.1 on the Mac and use SSH tunnels (encrypts + authenticates
+  via SSH). This is the recommended pattern.
+- If you must bind 0.0.0.0, put a firewall rule (`pf` on macOS) in front
+  that only allows your specific Windows/Linux IP.
+- Future: HMAC token in `IPH_CONNECT_TOKEN` env (tracked as a follow-up).
+
+### Troubleshooting from the client
+
+```
+iphone-harness: remote daemon unreachable at tcp://127.0.0.1:8763
+```
+
+Means: client can't reach the daemon. On the Mac, check:
+
+```bash
+pgrep -fa iphone_harness.daemon          # daemon process alive?
+lsof -iTCP -sTCP:LISTEN | grep python    # bound to TCP?
+```
+
+On Windows: `Test-NetConnection -ComputerName <mac> -Port 8763`.
+
+---
+
 # Part B — Android Setup
 
 Android setup is significantly simpler than iOS — no signing, no Xcode, no provisioning.

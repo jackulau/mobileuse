@@ -368,6 +368,40 @@ def screenshot(path=None):
     return r["path"]
 
 
+# ---- live screen stream (consumed by viewer/server.py) --------------------
+
+def screen_stream_start(fps=6, quality=60, max_dim=800):
+    """Start the daemon's screen-capture loop. Idempotent — calling again with
+    different knobs reconfigures the running loop. Returns the daemon's reply
+    dict (running, fps, quality, max_dim, started?|updated?)."""
+    _drop_conn()
+    r = _send({
+        "method": "screen_stream_start",
+        "params": {"fps": fps, "quality": quality, "max_dim": max_dim},
+    })
+    return r.get("result", {"running": False})
+
+
+def screen_stream_frame():
+    """Pull the latest JPEG frame from the daemon. Returns a dict:
+        {ready: bool, frame_no: int, jpeg_b64?: str, fps?, quality?}
+    Decode jpeg_b64 via base64.b64decode → JPEG bytes.
+
+    Drops the cached socket first — daemons close the conn after every reply,
+    so the cache from the previous start/frame call is dead by now and would
+    silently return an empty response on the next request."""
+    _drop_conn()
+    r = _send({"method": "screen_stream_frame", "params": {}}, timeout=10.0)
+    return r.get("result", {"ready": False, "frame_no": 0})
+
+
+def screen_stream_stop():
+    """Cancel the daemon's capture loop. Idempotent."""
+    _drop_conn()
+    r = _send({"method": "screen_stream_stop", "params": {}})
+    return r.get("result", {"running": False})
+
+
 def ocr(image_path=None, languages=("en-US",)):
     """Apple Vision OCR on a PNG. macOS-only — uses the system Vision framework
     via PyObjC; no network, no API keys.
