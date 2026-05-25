@@ -21,6 +21,8 @@ import sys
 import urllib.error
 import urllib.request
 
+from mobile_use._platform import is_linux, is_macos
+
 APPIUM_URL = os.environ.get("IPH_APPIUM_URL") or os.environ.get("ANH_APPIUM_URL") or "http://127.0.0.1:4723"
 
 
@@ -174,6 +176,26 @@ def main(argv=None, *, platform=None):
               "  - Pass --ios or --android\n"
               "Then re-run `mobile-use quickstart`.", file=sys.stderr)
         return 2
+
+    # Linux-on-iOS: clearly explain the remote-Mac requirement before doctor
+    # noise. Without a remote Appium URL, the local checks can't possibly pass.
+    if platform == "ios" and is_linux():
+        iph_url = os.environ.get("IPH_APPIUM_URL", "")
+        looks_local = (not iph_url) or any(loc in iph_url for loc in
+                                            ("127.0.0.1", "localhost", "::1"))
+        if looks_local:
+            print("mobile-use quickstart --ios on Linux requires a remote macOS Appium server.")
+            print()
+            print("  Quick setup:")
+            print("    1. On a Mac with Xcode + WDA signed:")
+            print("         IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'")
+            print("    2. From this Linux host (SSH tunnel):")
+            print("         ssh -L 8763:127.0.0.1:8763 <mac-host>")
+            print("    3. Re-run with remote daemon URL:")
+            print("         mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c '...'")
+            print()
+            print("  See SETUP.md → 'iOS from Windows / Linux'.")
+            return 2
 
     print(f"mobile-use quickstart  ({platform})")
     print("=" * 60)

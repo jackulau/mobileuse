@@ -240,6 +240,18 @@ def main(argv=None):
     ios = not args.android_only
     android = not args.ios_only
 
+    # Linux + --ios-only: print remote-Mac guidance up front. The user can
+    # still proceed (the .env writer is platform-neutral), but they need to
+    # know IPH_APPIUM_URL must point at a real macOS Appium server.
+    from mobile_use._platform import is_linux
+    if is_linux() and ios and not android:
+        print("Heads up: iOS local setup needs macOS (Xcode + WebDriverAgent).")
+        print("On Linux, drive iOS via a remote Mac:")
+        print("  - Set IPH_APPIUM_URL=http://<your-mac>:4723 in the .env this script writes,")
+        print("    OR use `--remote-daemon tcp://<mac>:8763` on the CLI.")
+        print("  - See SETUP.md → 'iOS from Windows / Linux' for the full walkthrough.")
+        print()
+
     target = Path(args.path).resolve() if args.path else (
         ALT_ENV_PATH if ALT_ENV_PATH.exists() else DEFAULT_ENV_PATH
     )
