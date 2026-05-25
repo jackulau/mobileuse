@@ -35,6 +35,8 @@ def test_doctor_phase_short_circuits_on_fail(monkeypatch, capsys):
 
     monkeypatch.setattr(quickstart, "_detect_platform", lambda: "ios")
     monkeypatch.setattr(quickstart, "run_appium_phase", lambda **kw: (True, "stub"))
+    # Bypass D5 Linux+ios short-circuit (test runs cross-platform in CI).
+    monkeypatch.setenv("IPH_APPIUM_URL", "http://my-mac.local:4723")
 
     called = {"smoke": 0}
     def fake_smoke(p):
@@ -76,6 +78,9 @@ def test_appium_phase_aborts_when_unreachable(monkeypatch):
     monkeypatch.setattr(quickstart, "_detect_platform", lambda: "ios")
     monkeypatch.setattr(quickstart, "appium_reachable", lambda *a, **kw: False)
     monkeypatch.setattr(quickstart.shutil, "which", lambda c: "/usr/local/bin/appium")
+    # Bypass the Linux+ios remote-Mac short-circuit added in D5 — this test
+    # is exercising the Appium preflight branch, not the platform gate.
+    monkeypatch.setenv("IPH_APPIUM_URL", "http://my-mac.local:4723")
 
     called = {"doctor": 0}
     monkeypatch.setattr(quickstart, "run_doctor_phase",
