@@ -213,11 +213,27 @@ DATA:
   mobile-use training-stats            show training data summary
 
 OPTIONS:
-  --name <NAME>   Named daemon for multiboxing (per-device socket + session).
-  --version       Show version
+  --name <NAME>           Named daemon for multiboxing (per-device socket + session).
+  --remote-daemon <URI>   Client-only mode — drive a remote daemon over TCP.
+                          Example: `--remote-daemon tcp://127.0.0.1:8763`
+                          (use `ssh -L 8763:127.0.0.1:8763 <mac>` first).
+                          Lets a Windows or Linux host control iOS via a Mac
+                          running Appium+WebDriverAgent+iphone-harness daemon.
+                          Sets IPH_CONNECT (--ios) or ANH_CONNECT (--android).
+  --headed                Open a live device-screen viewer in your browser
+                          while the command runs (MJPEG at ~6 fps, JPEG q=60).
+  --headless              Explicit opt-out of viewer (default).
+  --version               Show version
 
 AUTO-DETECT: when exactly one device type is connected, --ios/--android
 is inferred. When both connected, you must specify.
+
+iOS FROM WINDOWS / LINUX (remote Mac bridge):
+  On the Mac (one time):  mobile-use bootstrap --ios-only && mobile-use ios build-wda
+  On the Mac (each run):  IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
+  On Windows/Linux:       ssh -L 8763:127.0.0.1:8763 mac     (in another shell)
+  On Windows/Linux:       mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c '...'
+  Full walkthrough:       SETUP.md → "iOS from Windows / Linux"
 
 MULTIBOXING (Python API):
   from mobile_use import DevicePool
@@ -248,9 +264,11 @@ def main():
         print(f"mobile-use {__version__}")
         return
 
-    # Extract platform flag and --name
+    # Extract platform flag, --name, --remote-daemon, --headed/--headless
     platform = None
     instance_name = None
+    remote_daemon = None
+    headed = None  # None = default (headless), True = headed, False = explicit headless
     remaining = []
     i = 0
     while i < len(args):
@@ -261,6 +279,13 @@ def main():
         elif args[i] == "--name" and i + 1 < len(args):
             instance_name = args[i + 1]
             i += 1
+        elif args[i] == "--remote-daemon" and i + 1 < len(args):
+            remote_daemon = args[i + 1]
+            i += 1
+        elif args[i] == "--headed":
+            headed = True
+        elif args[i] == "--headless":
+            headed = False
         else:
             remaining.append(args[i])
         i += 1
@@ -270,6 +295,25 @@ def main():
             os.environ["IPH_NAME"] = instance_name
         if platform == "android" or platform is None:
             os.environ["ANH_NAME"] = instance_name
+
+    # --remote-daemon sets IPH_CONNECT / ANH_CONNECT for the chosen platform.
+    # Validates the URI eagerly so bad input fails fast with a clear error.
+    if remote_daemon:
+        from iphone_harness import _ipc as _iph_ipc
+        try:
+            _iph_ipc.parse_endpoint(remote_daemon)
+        except ValueError as e:
+            sys.exit(f"Invalid --remote-daemon URI: {e}")
+        if platform == "ios" or platform is None:
+            os.environ["IPH_CONNECT"] = remote_daemon
+        if platform == "android" or platform is None:
+            os.environ["ANH_CONNECT"] = remote_daemon
+
+    # --headed / --headless flag goes into env so subprocess paths inherit it.
+    if headed is True:
+        os.environ["MOBILE_USE_HEADED"] = "1"
+    elif headed is False:
+        os.environ["MOBILE_USE_HEADED"] = "0"
 
     # Doctor with no platform → run both. Accept both `--doctor` (flag) and `doctor` (subcommand).
     if remaining and remaining[0] in {"--doctor", "doctor"} and platform is None:
