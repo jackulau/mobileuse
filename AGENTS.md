@@ -28,6 +28,17 @@ Built by @jackulau — github.com/jackulau/mobile_use.
 ## Shared
 - `SKILL.md` tells agents how to use either harness and CLI.
 - `SETUP.md` tells agents how to install, attach a device, and troubleshoot.
+- `mobile_use/_platform.py` — single source of truth for host detection
+  (is_linux/is_macos/linux_pkg_manager/install_hint). Touch this before
+  sprinkling new `sys.platform` checks.
+
+## Hosts
+- macOS: full iOS + Android. `brew` for system deps.
+- Linux: full Android (apt/dnf/pacman/zypper/apk). iOS only via remote macOS
+  (IPH_CONNECT TCP or IPH_APPIUM_URL pointing at a Mac). See SETUP.md
+  "iOS from Windows / Linux".
+- Windows: same iOS-via-remote-Mac pattern as Linux. Android works if adb is
+  on PATH.
 - `agent-workspace/` — agent-editable helpers + per-app domain skills
 - `interaction-skills/` — iOS-specific UI mechanics
 - `android-interaction-skills/` — Android-specific UI mechanics

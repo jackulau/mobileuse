@@ -124,8 +124,18 @@ def build_env(existing=None, devices=None, *, ios=True, android=True,
             if yes:
                 fill("IPH_XCODE_ORG_ID", defaults.get("IPH_XCODE_ORG_ID", ""))
             else:
+                if sys.stdin.isatty():
+                    print()
+                    print("IPH_XCODE_ORG_ID — your Apple Team ID (10 chars, e.g. ABCDE12345)")
+                    print("  How to find it:")
+                    print("    1. Open Keychain Access (Spotlight: Keychain)")
+                    print("    2. Login keychain → My Certificates")
+                    print("    3. Expand 'Apple Development: <your name>' → double-click cert")
+                    print("    4. Get Info → 'Organizational Unit' field is the 10-char Team ID")
+                    print("  Or in Xcode: Settings → Accounts → select Apple ID → Manage Certificates")
+                    print("  Full walkthrough: SETUP.md Part A3")
                 fill("IPH_XCODE_ORG_ID",
-                     _prompt("IPH_XCODE_ORG_ID (10-char Apple Team ID — Keychain → cert → Get Info)",
+                     _prompt("IPH_XCODE_ORG_ID",
                               default=""))
 
         if not has_real_value(out, "IPH_WDA_BUNDLE_ID"):
@@ -229,6 +239,18 @@ def main(argv=None):
 
     ios = not args.android_only
     android = not args.ios_only
+
+    # Linux + --ios-only: print remote-Mac guidance up front. The user can
+    # still proceed (the .env writer is platform-neutral), but they need to
+    # know IPH_APPIUM_URL must point at a real macOS Appium server.
+    from mobile_use._platform import is_linux
+    if is_linux() and ios and not android:
+        print("Heads up: iOS local setup needs macOS (Xcode + WebDriverAgent).")
+        print("On Linux, drive iOS via a remote Mac:")
+        print("  - Set IPH_APPIUM_URL=http://<your-mac>:4723 in the .env this script writes,")
+        print("    OR use `--remote-daemon tcp://<mac>:8763` on the CLI.")
+        print("  - See SETUP.md → 'iOS from Windows / Linux' for the full walkthrough.")
+        print()
 
     target = Path(args.path).resolve() if args.path else (
         ALT_ENV_PATH if ALT_ENV_PATH.exists() else DEFAULT_ENV_PATH

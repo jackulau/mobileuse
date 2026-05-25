@@ -37,10 +37,68 @@ If anything fails:
 ```bash
 mobile-use --doctor               # numbered checks with one-line remediations
 iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
+mobile-use ios sign-wda           # iOS: re-sign WebDriverAgent (the #1 setup blocker)
+mobile-use ios build-wda          # iOS: build the WDA test target (first-run setup)
+mobile-use quickstart --autostart-appium   # spawn Appium server in background
 ```
 
-See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, or skip to the
-sections below for usage.
+See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, including a
+[troubleshooting decision tree](SETUP.md#part-c--troubleshooting).
+
+### Linux
+
+Android-on-Linux is a first-class target. `mobile-use bootstrap` auto-detects
+your package manager (apt, dnf, pacman, zypper, apk) and installs `adb`, `node`,
+and the Appium uiautomator2 driver natively — no Homebrew required.
+
+```bash
+# Linux host (any apt/dnf/pacman/zypper/apk distro):
+pip install -e .
+mobile-use bootstrap --android-only
+mobile-use init --android-only
+mobile-use quickstart --android
+```
+
+**iOS on Linux** requires a Mac somewhere in the loop (Xcode + Apple
+codesigning are macOS-only by Apple). Two patterns:
+
+- **Remote daemon (TCP)** — Linux runs zero daemon locally; talks to a
+  remote `iphone-harness` daemon on a Mac via TCP:
+  ```bash
+  # On the Mac (one shot):
+  IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
+  # On Linux (in another shell):
+  ssh -L 8763:127.0.0.1:8763 <mac-host>
+  mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c 'print(active_app())'
+  ```
+- **Remote Appium URL** — `IPH_APPIUM_URL=http://<mac>:4723` lets a local
+  iphone-harness on Linux talk to a Mac running just Appium+WDA.
+
+See [`SETUP.md` → "iOS from Windows / Linux"](SETUP.md#ios-from-windows--linux)
+for the full walkthrough.
+
+### Runtime helpers (no device pain)
+
+```python
+from iphone_harness.helpers import wake_device, retry_on_disconnect, record_screen
+
+wake_device()                              # screen-off / locked? wake it.
+
+@retry_on_disconnect(max_attempts=3)        # USB blip / WDA crash → auto-restart + retry
+def run_script():
+    tap(find(label="Compose"))
+    type_text("hello")
+
+record_screen(duration=10)                  # save mp4 to /tmp (XCUITest + UIAutomator2)
+
+# record/replay a tap sequence:
+from mobile_use import record_replay
+import iphone_harness.helpers as h
+record_replay.start_recording("flow.py", helpers=h)
+# ... your taps/swipes/typing ...
+record_replay.stop_recording()              # writes runnable flow.py
+record_replay.replay("flow.py")             # play it back
+```
 
 ### Manual setup (skip if `mobile-use bootstrap` worked)
 
@@ -339,6 +397,13 @@ paste_text(text, ...)
 # Device
 unlock()
 
+# Navigation (both platforms — Android native buttons, iOS gesture equivalents)
+press_home()                             # both — go to home screen
+press_back()                             # Android: back key; iOS: swipe-from-left edge
+press_recents()                          # Android: recents; iOS: app switcher
+swipe_back()                             # iOS: explicit edge-swipe (alias for press_back on iOS)
+open_app_switcher()                      # iOS: swipe up + pause
+
 # iOS-only
 native_screenshot()                      # saves to iPhone Photos
 set_assistive_touch(on=True)
@@ -349,9 +414,6 @@ start_screen_recording()
 stop_screen_recording()
 
 # Android-only
-press_back()
-press_home()
-press_recents()
 open_notifications()
 close_notifications()
 grant_permission(package, permission)

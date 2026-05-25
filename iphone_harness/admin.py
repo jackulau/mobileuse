@@ -13,10 +13,38 @@ import time
 import urllib.error
 import urllib.request
 
+from mobile_use._platform import (
+    LINUX_LIBIMOBILEDEVICE_PKGS,
+    LINUX_NODE_PKGS,
+    install_hint,
+    is_linux,
+    is_macos,
+)
+
 from . import _ipc as ipc
 
 NAME = os.environ.get("IPH_NAME", "default")
 APPIUM_URL = os.environ.get("IPH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+def is_remote_daemon(name=None):
+    """True when IPH_CONNECT points at a daemon we don't manage locally
+    (Windows/Linux client-only mode driving a remote Mac).
+
+    Heuristic: IPH_CONNECT is set AND parses as a TCP endpoint. We trust the
+    operator's intent — if they set IPH_CONNECT=tcp://127.0.0.1:8763 with a
+    daemon running on the same host, that's still considered "remote" from
+    admin's perspective (ensure_daemon won't try to spawn locally; user is
+    responsible for the daemon). This keeps the rule simple: TCP = manual.
+    """
+    spec = os.environ.get("IPH_CONNECT")
+    if not spec:
+        return False
+    try:
+        kind, *_ = ipc.parse_endpoint(spec)
+    except ValueError:
+        return False
+    return kind == "tcp"
 
 
 def _version():
@@ -31,9 +59,98 @@ def daemon_alive(name=None):
     return ipc.ping(name or NAME, timeout=1.0)
 
 
-def ensure_daemon(wait=30.0, name=None, env=None):
-    """Spawn the daemon if no live one is reachable. Idempotent."""
+def _pid_alive(pid):
+    """True if a process with this pid exists."""
+    # isinstance(True, int) is True in Python — reject bool to avoid os.kill(1, 0).
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists but not ours — don't wipe its files
+    except OSError:
+        return False
+
+
+def cleanup_stale(name=None):
+    """Remove leftover .pid + (for AF_UNIX) .sock from a dead daemon.
+
+    Called before spawn to keep stale state from a kill -9 / OOM / crash from
+    confusing the next ensure_daemon. Safe to call when no files exist or when
+    a live daemon owns them. TCP endpoints (IPH_BIND=tcp://...) have no socket
+    file to clean — only the pidfile.
+    """
     name = name or NAME
+    pid_path = ipc.pid_path(name)
+    endpoint = ipc.bind_endpoint(name)
+
+    # If a live daemon is responding, leave everything alone.
+    if ipc.ping(name, timeout=0.3):
+        return False
+
+    cleaned = False
+    # Read PID file if present; only unlink if the recorded process is gone.
+    # Tolerate binary garbage (UnicodeDecodeError) + empty string (ValueError) +
+    # permission-denied (PermissionError) — all mean "treat as stale, remove".
+    try:
+        recorded = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
+        recorded = None
+
+    if recorded is not None and not _pid_alive(recorded):
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+    elif recorded is None and pid_path.exists():
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    # TCP endpoint (e.g. tcp://127.0.0.1:8763) has no file — skip socket cleanup.
+    if endpoint[0] == "unix":
+        from pathlib import Path as _P
+        sock_path = _P(endpoint[1])
+        if sock_path.exists():
+            try:
+                sock_path.unlink()
+                cleaned = True
+            except FileNotFoundError:
+                pass
+
+    return cleaned
+
+
+def ensure_daemon(wait=30.0, name=None, env=None):
+    """Spawn the daemon if no live one is reachable. Idempotent.
+
+    In client-only mode (IPH_CONNECT=tcp://<remote>:port — e.g. from a Windows
+    or Linux host driving a remote Mac), this function NEVER spawns a local
+    daemon. It only pings; on failure it raises a remote-side checklist.
+    """
+    name = name or NAME
+
+    if is_remote_daemon(name):
+        spec = os.environ.get("IPH_CONNECT", "")
+        if daemon_alive(name):
+            return
+        raise RuntimeError(
+            f"iphone-harness: remote daemon unreachable at {spec}.\n"
+            f"  This host is in client-only mode (IPH_CONNECT set).\n"
+            f"  Checks on the remote Mac:\n"
+            f"    - daemon running?  (ssh mac 'pgrep -fa iphone_harness.daemon')\n"
+            f"    - bound to TCP?    (ssh mac 'lsof -iTCP -sTCP:LISTEN | grep python')\n"
+            f"    - reachable port?  (Windows: `Test-NetConnection -ComputerName <mac> -Port <port>`)\n"
+            f"  Tip: prefer `ssh -L 8763:127.0.0.1:8763 <mac>` over exposing the\n"
+            f"  daemon on 0.0.0.0 — the RPC is unauthenticated."
+        )
+
     if daemon_alive(name):
         # Live ping is enough — but verify the Appium-side handshake too. A
         # daemon whose webdriver session died still answers meta:* but errors
@@ -50,9 +167,14 @@ def ensure_daemon(wait=30.0, name=None, env=None):
             pass
         restart_daemon(name)
 
+    # Stale .sock or .pid from a hard-killed previous daemon would confuse spawn.
+    cleanup_stale(name)
+
     e = {**os.environ, **({"IPH_NAME": name} if name else {}), **(env or {})}
+    # IPH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
+    module = e.get("IPH_DAEMON_MODULE", "iphone_harness.daemon")
     p = subprocess.Popen(
-        [sys.executable, "-m", "iphone_harness.daemon"],
+        [sys.executable, "-m", module],
         env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         **ipc.spawn_kwargs(),
     )
@@ -109,9 +231,21 @@ def restart_daemon(name=None):
             os.kill(daemon_pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
-        time.sleep(0.5)
+        # Wait up to 2s for SIGTERM to settle.
+        deadline = time.time() + 2.0
+        while time.time() < deadline and _pid_alive(daemon_pid):
+            time.sleep(0.1)
 
-    # Step 4: cleanup pid + sock files.
+    # Step 4: SIGKILL the daemon if it's still alive after SIGTERM.
+    if daemon_pid and _pid_alive(daemon_pid):
+        try:
+            os.kill(daemon_pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        # Reap zombie state on local process.
+        time.sleep(0.2)
+
+    # Step 5: cleanup pid + sock files.
     try: os.unlink(pid_path)
     except FileNotFoundError: pass
     ipc.cleanup_endpoint(name)
@@ -152,14 +286,42 @@ def _check_device():
             return True, f"paired ({udid})"
         return False, f"udid {udid} not in `idevice_id -l`: {out!r}"
     except FileNotFoundError:
-        return False, "`idevice_id` not installed (brew install libimobiledevice)"
+        hint = install_hint("libimobiledevice", LINUX_LIBIMOBILEDEVICE_PKGS)
+        return False, f"`idevice_id` not installed ({hint})"
     except Exception as e:
         return False, str(e)
 
 
+def _check_libimobiledevice():
+    """Return (True, info) if libimobiledevice tools are available.
+
+    On macOS: asks Homebrew. On Linux: checks `idevice_id` on PATH (typical
+    apt/dnf/pacman libimobiledevice package installs this binary). Linux
+    users don't have brew — checking the binary directly is the honest
+    test for "are the tools usable".
+    """
+    if is_macos():
+        brew = shutil.which("brew")
+        if brew is None:
+            return False, "brew not installed"
+        try:
+            out = subprocess.check_output([brew, "list", "--versions", "libimobiledevice"],
+                                          timeout=4.0, stderr=subprocess.DEVNULL).decode().strip()
+            return (True, out) if out else (False, "libimobiledevice not installed")
+        except subprocess.CalledProcessError:
+            return False, "libimobiledevice not installed"
+        except Exception as e:
+            return False, str(e)
+    if is_linux():
+        if shutil.which("idevice_id") is None:
+            return False, "libimobiledevice (`idevice_id`) not on PATH"
+        return True, shutil.which("idevice_id")
+    return True, "(skipped — non-macOS / non-Linux host)"
+
+
 def _check_brew_pkg(pkg):
-    """Return (True, version) if Homebrew has `pkg` installed, else False."""
-    if sys.platform != "darwin":
+    """Legacy shim — kept so external callers + tests still import this."""
+    if not is_macos():
         return True, "(skipped — non-macOS)"
     brew = shutil.which("brew")
     if brew is None:
@@ -264,9 +426,9 @@ def _check_python_pkg():
 
 
 def _check_xcode():
-    """Return (True, version) if Xcode is selected (`xcodebuild -version`)."""
-    if sys.platform != "darwin":
-        return True, "(skipped — non-macOS)"
+    """Return (True, version) if Xcode is selected. Auto-skipped off macOS."""
+    if not is_macos():
+        return True, "(skipped — Xcode is macOS-only; drive iOS from Linux via remote IPH_APPIUM_URL)"
     if shutil.which("xcodebuild") is None:
         return False, "xcodebuild not on PATH"
     try:
@@ -277,22 +439,66 @@ def _check_xcode():
         return False, str(e)
 
 
+def _check_wda_signing():
+    """Return (True, state) if WDA is signed. Auto-skipped off macOS — signing is Xcode-only."""
+    if not is_macos():
+        return True, "(skipped — WDA signing requires macOS + Xcode)"
+    try:
+        from mobile_use.ios_wda import check_wda_signing
+        state, details = check_wda_signing()
+        if state == "signed":
+            return True, details
+        return False, f"{state}: {details}"
+    except Exception as e:
+        return False, f"WDA check failed: {e}"
+
+
+def _check_battery():
+    """Return (True, level%) if device battery > 20%. Falls back to skipped if no tool."""
+    udid = os.environ.get("IPH_UDID")
+    if not udid:
+        return True, "(skipped — IPH_UDID not set)"
+    if shutil.which("ideviceinfo") is None:
+        return True, "(skipped — ideviceinfo not installed)"
+    try:
+        # `ideviceinfo -k BatteryCurrentCapacity` returns 0-100
+        out = subprocess.check_output(
+            ["ideviceinfo", "-u", udid, "-q", "com.apple.mobile.battery", "-k", "BatteryCurrentCapacity"],
+            timeout=5.0, stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        try:
+            level = int(out)
+        except (ValueError, TypeError):
+            return True, f"(skipped — battery level unreadable: {out!r})"
+        if level < 20:
+            return True, f"{level}% (WARN: low — plug in to avoid disconnect)"
+        return True, f"{level}%"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        return True, "(skipped — battery info unavailable)"
+
+
 def run_doctor():
     """Diagnostic. Prints status of each external dependency. Returns 0 on all-green."""
     print(f"iphone-harness {_version() or '(dev)'}\n")
     rc = 0
 
+    libimobiledevice_hint = install_hint("libimobiledevice ideviceinstaller", LINUX_LIBIMOBILEDEVICE_PKGS)
+    node_hint = install_hint("node", LINUX_NODE_PKGS)
+    xcode_hint = ("(skipped — Linux host. To drive iOS from Linux, set "
+                  "IPH_APPIUM_URL=http://<your-mac>:4723 and run Appium on the Mac.)"
+                  if is_linux() else
+                  "Install Xcode from App Store, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`")
     checks = [
-        ("Homebrew package: libimobiledevice", _check_brew_pkg, ("libimobiledevice",),
-         "brew install libimobiledevice ideviceinstaller"),
+        ("libimobiledevice + ideviceinstaller", _check_libimobiledevice, (),
+         libimobiledevice_hint),
         ("Node.js + npm", _check_node, (),
-         "brew install node"),
+         node_hint),
         ("Appium installed", _check_appium_installed, (),
          "npm i -g appium"),
         ("Appium xcuitest driver", _check_driver_installed, ("xcuitest",),
          "appium driver install xcuitest  (or: appium-xcuitest-driver@10.43.1)"),
         ("Xcode (selected)", _check_xcode, (),
-         "Install Xcode from App Store, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`"),
+         xcode_hint),
         ("Python package installed (pip install -e .)", _check_python_pkg, (),
          "Run from repo root: pip install -e .  (or `mobile-use bootstrap`)"),
         ("`iphone-harness` CLI on PATH", _check_cli_on_path, ("iphone-harness",),
@@ -303,6 +509,10 @@ def run_doctor():
          f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
         ("iPhone paired + Developer Mode on", _check_device, (),
          "Plug in iPhone, `Trust This Computer` if prompted, Settings → Privacy & Security → Developer Mode → On"),
+        ("WebDriverAgent signed (provisioning profile present + not expired)", _check_wda_signing, (),
+         "Run `mobile-use ios sign-wda` — opens Xcode for the 6-step signing dance."),
+        ("Device battery level (>20% recommended)", _check_battery, (),
+         "Plug in the iPhone to charge. Low battery causes USB disconnects during long sessions."),
     ]
     total = len(checks) + 2
 

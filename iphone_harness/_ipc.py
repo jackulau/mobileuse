@@ -1,13 +1,22 @@
-"""Daemon IPC plumbing — AF_UNIX socket, part of mobile-use.
+"""Daemon IPC plumbing — AF_UNIX (default) or TCP, part of mobile-use.
 
-Agent drives a physical iPhone from a Mac. AF_UNIX keeps the path short
-and avoids TCP complexity. Linux works too for remote ssh-attached phones.
+Agent drives a physical iPhone from a Mac. AF_UNIX keeps the path short and
+avoids TCP complexity for same-host operation.
+
+TCP mode (IPH_BIND for server-side, IPH_CONNECT for client-side) lets a
+Windows or Linux host drive a remote Mac that's running Appium+WDA, and lets
+a viewer process pull MJPEG frames over the network. Endpoint URIs:
+    unix:/tmp/iph-default.sock   (default; identical to no env)
+    tcp://127.0.0.1:8763         (loopback — recommended; pair with `ssh -L`)
+    tcp://0.0.0.0:8763           (any iface — prints a security warning;
+                                  the RPC is unauthenticated)
 """
 import asyncio
 import json
 import os
 import re
 import socket
+import sys
 from pathlib import Path
 
 # AF_UNIX sun_path on macOS is 104 bytes. /tmp keeps the path short; macOS's
@@ -19,6 +28,7 @@ _RUNTIME = Path(IPH_RUNTIME_DIR or "/tmp")
 _TMP.mkdir(parents=True, exist_ok=True)
 _RUNTIME.mkdir(parents=True, exist_ok=True)
 _NAME_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
 def _check(name):
@@ -42,8 +52,61 @@ def pid_path(name):    return _RUNTIME / f"{_runtime_stem(name)}.pid"
 def _sock_path(name):  return _RUNTIME / f"{_runtime_stem(name)}.sock"
 
 
+def parse_endpoint(spec):
+    """Parse 'unix:/path' or 'tcp://host:port' → ('unix', path) | ('tcp', host, port).
+
+    Raises ValueError on malformed input.
+    """
+    if not isinstance(spec, str) or not spec:
+        raise ValueError("empty endpoint spec")
+    if spec.startswith("unix:"):
+        path = spec[len("unix:"):]
+        if path.startswith("//"):
+            path = path[2:]
+        if not path:
+            raise ValueError(f"unix endpoint missing path: {spec!r}")
+        return ("unix", path)
+    if spec.startswith("tcp://"):
+        rest = spec[len("tcp://"):]
+        if ":" not in rest:
+            raise ValueError(f"tcp endpoint missing port: {spec!r}")
+        host, _, port_s = rest.rpartition(":")
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        try:
+            port = int(port_s)
+        except ValueError:
+            raise ValueError(f"tcp endpoint port not integer: {spec!r}")
+        if not (0 < port < 65536):
+            raise ValueError(f"tcp endpoint port out of range: {port}")
+        if not host:
+            raise ValueError(f"tcp endpoint missing host: {spec!r}")
+        return ("tcp", host, port)
+    raise ValueError(f"endpoint must start with 'unix:' or 'tcp://': {spec!r}")
+
+
+def bind_endpoint(name):
+    """Server-side endpoint. IPH_BIND overrides; default = unix path under runtime dir."""
+    spec = os.environ.get("IPH_BIND")
+    if spec:
+        return parse_endpoint(spec)
+    return ("unix", str(_sock_path(name)))
+
+
+def connect_endpoint(name):
+    """Client-side endpoint. IPH_CONNECT overrides; default = unix path under runtime dir."""
+    spec = os.environ.get("IPH_CONNECT")
+    if spec:
+        return parse_endpoint(spec)
+    return ("unix", str(_sock_path(name)))
+
+
 def sock_addr(name):
-    return str(_sock_path(name))
+    """Human-readable endpoint string for logs/error messages. Honors IPH_BIND."""
+    ep = bind_endpoint(name)
+    if ep[0] == "unix":
+        return ep[1]
+    return f"tcp://{ep[1]}:{ep[2]}"
 
 
 def spawn_kwargs():
@@ -52,15 +115,29 @@ def spawn_kwargs():
 
 
 def connect(name, timeout=1.0):
-    """Blocking client. Returns (sock, token); token is always None on POSIX."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    s.connect(str(_sock_path(name)))
+    """Blocking client. Returns (sock, token); token is always None.
+
+    Endpoint comes from IPH_CONNECT (or default AF_UNIX path).
+    """
+    ep = connect_endpoint(name)
+    if ep[0] == "unix":
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(ep[1])
+        return s, None
+    _, host, port = ep
+    s = socket.create_connection((host, port), timeout=timeout)
     return s, None
 
 
+_MAX_MSG = 64 * 1024 * 1024  # 64 MB cap — covers any iPhone screenshot, screen video
+
 def request(c, token, req):
-    """One-shot send + recv + parse on an open socket. Caller closes the socket."""
+    """One-shot send + recv + parse on an open socket. Caller closes the socket.
+
+    Caps incoming data at _MAX_MSG to prevent unbounded memory growth from a
+    malfunctioning or compromised daemon.
+    """
     if token:
         req = {**req, "token": token}
     c.sendall((json.dumps(req) + "\n").encode())
@@ -70,6 +147,10 @@ def request(c, token, req):
         if not chunk:
             break
         data += chunk
+        if len(data) > _MAX_MSG:
+            raise RuntimeError(
+                f"IPC response exceeded {_MAX_MSG // (1024*1024)}MB cap — daemon malfunction?"
+            )
     return json.loads(data or b"{}")
 
 
@@ -111,26 +192,43 @@ def identify(name, timeout=1.0):
 
 
 async def serve(name, handler):
-    """Run the AF_UNIX server until cancelled."""
-    path = str(_sock_path(name))
-    if os.path.exists(path):
-        os.unlink(path)
-    # umask 0o077 makes bind() create the socket as 0600 — no TOCTOU window before chmod.
-    old_umask = os.umask(0o077)
-    try:
-        server = await asyncio.start_unix_server(handler, path=path)
-    finally:
-        os.umask(old_umask)
+    """Run the server until cancelled. Endpoint comes from IPH_BIND (or default AF_UNIX)."""
+    ep = bind_endpoint(name)
+    if ep[0] == "unix":
+        path = ep[1]
+        if os.path.exists(path):
+            os.unlink(path)
+        # umask 0o077 makes bind() create the socket as 0600 — no TOCTOU window before chmod.
+        old_umask = os.umask(0o077)
+        try:
+            server = await asyncio.start_unix_server(handler, path=path)
+        finally:
+            os.umask(old_umask)
+    else:
+        _, host, port = ep
+        if host not in _LOOPBACK:
+            print(
+                f"iphone-harness: WARNING — TCP daemon binding to {host}:{port} "
+                f"(non-loopback). RPC is unauthenticated; use an SSH tunnel "
+                f"(ssh -L {port}:127.0.0.1:{port} <mac>) or restrict at firewall.",
+                file=sys.stderr,
+            )
+        server = await asyncio.start_server(handler, host=host, port=port)
     async with server:
         await asyncio.Event().wait()
 
 
 def expected_token():
-    """Always None on POSIX — AF_UNIX + chmod 600 is the boundary."""
+    """Always None — AF_UNIX + chmod 600 (or TCP loopback) is the boundary."""
     return None
 
 
 def cleanup_endpoint(name):
-    p = _sock_path(name)
-    try: p.unlink()
-    except FileNotFoundError: pass
+    """Remove the unix socket file. No-op for TCP."""
+    ep = bind_endpoint(name)
+    if ep[0] != "unix":
+        return
+    try:
+        Path(ep[1]).unlink()
+    except FileNotFoundError:
+        pass

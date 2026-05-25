@@ -122,6 +122,103 @@ def appium(script, **args):
     return _send({"method": "appium", "params": {"script": script, "args": args}})["result"]
 
 
+# ---- device state + recovery -----------------------------------------------
+
+class DeviceDisconnectError(RuntimeError):
+    """Device became unreachable mid-call (USB disconnect, Appium timeout, ADB crash)."""
+
+
+def is_locked():
+    """True if screen is locked (lockscreen visible or display off)."""
+    try:
+        return bool(appium("mobile: isLocked"))
+    except Exception:
+        try:
+            info = appium("mobile: deviceInfo")
+            return bool(info.get("locked", False)) if isinstance(info, dict) else False
+        except Exception:
+            return False
+
+
+def wake_device():
+    """Wake screen + dismiss lock screen. Returns True iff device ends up unlocked.
+
+    On Android, uses `mobile: unlock` if available, falls back to pressing
+    power + dismissing the lock screen via swipe up.
+    """
+    if not is_locked():
+        return True  # already awake
+    unlocked = False
+    try:
+        appium("mobile: unlock")
+        unlocked = True
+    except Exception:
+        try:
+            appium("mobile: pressKey", keycode=26)  # POWER
+            time.sleep(0.5)
+            appium("mobile: pressKey", keycode=82)  # MENU (some devices unlock)
+            unlocked = True
+        except Exception:
+            unlocked = False
+    if not unlocked:
+        return False
+    try:
+        return not is_locked()
+    except Exception:
+        return False
+
+
+def retry_on_disconnect(max_attempts=3, backoff=0.5):
+    """Decorator: retry on device-disconnect errors with backoff + wake.
+
+    Catches RuntimeError messages matching common disconnect signals
+    (USB pull, ADB session drop, UIAutomator2 timeout) and restarts the
+    daemon + wakes the device before each retry.
+
+    Usage:
+        @retry_on_disconnect(max_attempts=3)
+        def open_app(package):
+            appium('mobile: activateApp', appId=package)
+    """
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise ValueError(f"backoff must be >= 0, got {backoff!r}")
+    DISCONNECT_PATTERNS = (
+        "unreachable", "disconnect", "session", "stale",
+        "connection", "timed out", "adb", "uiautomator",
+    )
+
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except RuntimeError as e:
+                    msg = str(e).lower()
+                    if not any(p.lower() in msg for p in DISCONNECT_PATTERNS):
+                        raise
+                    last_err = e
+                    if attempt < max_attempts - 1:
+                        time.sleep(backoff * (2 ** attempt))
+                        try:
+                            from .admin import restart_daemon, ensure_daemon
+                            restart_daemon()
+                            ensure_daemon()
+                            wake_device()
+                        except Exception:
+                            pass
+            raise DeviceDisconnectError(
+                f"{fn.__name__} failed after {max_attempts} attempts. Last error: {last_err}\n"
+                f"Run `android-harness --doctor` to diagnose."
+            ) from last_err
+        wrapper.__name__ = fn.__name__
+        wrapper.__doc__ = fn.__doc__
+        return wrapper
+    return decorator
+
+
 # ---- perception ------------------------------------------------------------
 
 def screenshot(path=None):
@@ -577,12 +674,20 @@ def ocr(image_path=None, languages=("en-US",)):
     """
     if image_path is None:
         image_path = screenshot()
+    from mobile_use._platform import OCRNotAvailableError, is_macos
+    if not is_macos():
+        raise OCRNotAvailableError(
+            "ocr() uses the macOS Vision framework — not bundled on this host. "
+            "Linux: install Tesseract (`sudo apt install tesseract-ocr` or "
+            "equivalent) and wrap it yourself, or run mobile_use from a macOS "
+            "host. See SETUP.md#ocr-on-linux for details."
+        )
     try:
         import Vision
         from Foundation import NSURL
     except ImportError as e:
-        raise RuntimeError(
-            "ocr() needs PyObjC (macOS only). Install: pip install pyobjc-framework-Vision"
+        raise OCRNotAvailableError(
+            "ocr() needs PyObjC. Install: pip install pyobjc-framework-Vision"
         ) from e
 
     url = NSURL.fileURLWithPath_(image_path)
@@ -693,6 +798,88 @@ def annotated_screenshot(path=None, run_ocr=True):
     annotated = (path or base).replace(".png", ".annotated.png") if (path or base).endswith(".png") else (path or base) + ".annotated.png"
     img.save(annotated)
     return annotated, result
+
+
+# ---- screen recording ------------------------------------------------------
+
+import base64 as _base64
+import subprocess as _subprocess
+
+def record_screen(duration=10, path=None, bit_rate="4M", size=None):
+    """Record the device screen for `duration` seconds. Returns the host path.
+
+    Uses Appium's `mobile: startRecordingScreen` (UIAutomator2 backend) which
+    wraps `adb shell screenrecord`. Returns base64-encoded MP4; we decode and
+    write locally. screenrecord caps each segment at 180s — for longer recordings
+    chain multiple calls.
+
+    Args:
+        duration: seconds to record (max 180)
+        path: host filesystem path; defaults to /tmp/anh-record-<ts>.mp4
+        bit_rate: e.g. '4M' (default), '8M' for higher quality
+        size: optional '<width>x<height>' for downscaling
+
+    Returns:
+        Path string of the saved .mp4 file.
+    """
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ValueError(f"record_screen duration must be > 0, got {duration!r}")
+    if duration > 180:
+        raise RuntimeError(
+            f"adb screenrecord caps at 180s per segment; got {duration}.\n"
+            f"  For longer: call record_screen() multiple times and concat with ffmpeg."
+        )
+    if path is None:
+        path = str(ipc._TMP / f"anh-record-{int(time.time())}.mp4")
+    import os as _os
+    if _os.path.isdir(path):
+        raise IsADirectoryError(f"record_screen path is a directory: {path}")
+    parent = _os.path.dirname(_os.path.abspath(path))
+    if parent and not _os.path.exists(parent):
+        _os.makedirs(parent, exist_ok=True)
+    args = {"timeLimit": int(duration) + 5, "bitRate": bit_rate}
+    if size:
+        args["videoSize"] = size
+    try:
+        appium("mobile: startRecordingScreen", **args)
+    except Exception as e:
+        raise RuntimeError(
+            f"start screen recording failed: {e}\n"
+            f"  Likely cause: UIAutomator2 version doesn't support `mobile: startRecordingScreen`.\n"
+            f"  Try updating: `appium driver install --source=npm appium-uiautomator2-driver@latest`."
+        )
+    time.sleep(duration)
+    try:
+        b64 = appium("mobile: stopRecordingScreen")
+    except Exception as e:
+        raise RuntimeError(f"stop screen recording failed: {e}")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
+
+
+def start_screen_recording(bit_rate="4M", size=None):
+    """Start a non-blocking screen recording. Call stop_screen_recording() to finish.
+
+    For one-shot recording with a known duration, prefer `record_screen()`.
+    """
+    args = {"timeLimit": 600, "bitRate": bit_rate}
+    if size:
+        args["videoSize"] = size
+    appium("mobile: startRecordingScreen", **args)
+
+
+def stop_screen_recording(path=None):
+    """Stop a recording started with start_screen_recording. Returns host path.
+
+    The video is base64-encoded by Appium; we decode and save locally.
+    """
+    if path is None:
+        path = str(ipc._TMP / f"anh-record-{int(time.time())}.mp4")
+    b64 = appium("mobile: stopRecordingScreen")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
 
 
 # ---- agent-helpers hot-load ------------------------------------------------

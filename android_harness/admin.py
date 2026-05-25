@@ -7,10 +7,32 @@ import time
 import urllib.error
 import urllib.request
 
+from mobile_use._platform import (
+    LINUX_ADB_PKGS,
+    LINUX_NODE_PKGS,
+    install_hint,
+    is_linux,
+    is_macos,
+)
+
 from . import _ipc as ipc
 
 NAME = os.environ.get("ANH_NAME", "default")
 APPIUM_URL = os.environ.get("ANH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+def is_remote_daemon(name=None):
+    """True when ANH_CONNECT points at a daemon we don't manage locally.
+    Same client-only mode as iphone_harness — caller is responsible for the
+    remote daemon, ensure_daemon won't spawn locally."""
+    spec = os.environ.get("ANH_CONNECT")
+    if not spec:
+        return False
+    try:
+        kind, *_ = ipc.parse_endpoint(spec)
+    except ValueError:
+        return False
+    return kind == "tcp"
 
 
 def _version():
@@ -25,8 +47,83 @@ def daemon_alive(name=None):
     return ipc.ping(name or NAME, timeout=1.0)
 
 
+def _pid_alive(pid):
+    """True if a process with this pid exists."""
+    # isinstance(True, int) is True — reject bool to avoid os.kill(1, 0).
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def cleanup_stale(name=None):
+    """Remove leftover .pid + (for AF_UNIX) .sock from a dead daemon.
+
+    TCP endpoints (ANH_BIND=tcp://...) have no socket file to clean.
+    """
+    name = name or NAME
+    pid_path = ipc.pid_path(name)
+    endpoint = ipc.bind_endpoint(name)
+
+    if ipc.ping(name, timeout=0.3):
+        return False
+
+    cleaned = False
+    try:
+        recorded = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
+        recorded = None
+
+    if recorded is not None and not _pid_alive(recorded):
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+    elif recorded is None and pid_path.exists():
+        try:
+            pid_path.unlink()
+            cleaned = True
+        except FileNotFoundError:
+            pass
+
+    # TCP endpoint (e.g. tcp://127.0.0.1:8763) has no file — skip socket cleanup.
+    if endpoint[0] == "unix":
+        from pathlib import Path as _P
+        sock_path = _P(endpoint[1])
+        if sock_path.exists():
+            try:
+                sock_path.unlink()
+                cleaned = True
+            except FileNotFoundError:
+                pass
+
+    return cleaned
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     name = name or NAME
+
+    if is_remote_daemon(name):
+        spec = os.environ.get("ANH_CONNECT", "")
+        if daemon_alive(name):
+            return
+        raise RuntimeError(
+            f"android-harness: remote daemon unreachable at {spec}.\n"
+            f"  This host is in client-only mode (ANH_CONNECT set).\n"
+            f"  Checks on the remote host:\n"
+            f"    - daemon running?  (ssh remote 'pgrep -fa android_harness.daemon')\n"
+            f"    - bound to TCP?    (ssh remote 'lsof -iTCP -sTCP:LISTEN | grep python')\n"
+            f"    - reachable port?  (telnet/netstat to confirm)\n"
+        )
+
     if daemon_alive(name):
         try:
             s, token = ipc.connect(name, timeout=3.0)
@@ -40,9 +137,13 @@ def ensure_daemon(wait=30.0, name=None, env=None):
             pass
         restart_daemon(name)
 
+    cleanup_stale(name)
+
     e = {**os.environ, **({"ANH_NAME": name} if name else {}), **(env or {})}
+    # ANH_DAEMON_MODULE is a test-only escape hatch; defaults to real daemon.
+    module = e.get("ANH_DAEMON_MODULE", "android_harness.daemon")
     p = subprocess.Popen(
-        [sys.executable, "-m", "android_harness.daemon"],
+        [sys.executable, "-m", module],
         env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         **ipc.spawn_kwargs(),
     )
@@ -94,7 +195,16 @@ def restart_daemon(name=None):
             os.kill(daemon_pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
-        time.sleep(0.5)
+        deadline = time.time() + 2.0
+        while time.time() < deadline and _pid_alive(daemon_pid):
+            time.sleep(0.1)
+
+    if daemon_pid and _pid_alive(daemon_pid):
+        try:
+            os.kill(daemon_pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        time.sleep(0.2)
 
     try: os.unlink(pid_path)
     except FileNotFoundError: pass
@@ -125,7 +235,8 @@ def _check_device():
             return True, f"connected ({udid})"
         return False, f"serial {udid} not in `adb devices`: {lines!r}"
     except FileNotFoundError:
-        return False, "`adb` not installed (brew install android-platform-tools)"
+        hint = install_hint("android-platform-tools", LINUX_ADB_PKGS)
+        return False, f"`adb` not installed ({hint})"
     except Exception as e:
         return False, str(e)
 
@@ -139,8 +250,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ANDROID_REQUIRED_ENV = ("ANH_UDID",)
 
 
+def _check_adb():
+    """Return (True, path) if adb is on PATH. Distro-neutral check."""
+    p = shutil.which("adb")
+    if p is None:
+        return False, "adb not on PATH"
+    try:
+        v = subprocess.check_output([p, "version"], timeout=3.0,
+                                    stderr=subprocess.STDOUT).decode().strip().splitlines()[0]
+        return True, v
+    except Exception:
+        return True, p
+
+
 def _check_brew_pkg(pkg):
-    if sys.platform != "darwin":
+    """Legacy shim — kept so external callers + tests still import this."""
+    if not is_macos():
         return True, "(skipped — non-macOS)"
     brew = shutil.which("brew")
     if brew is None:
@@ -238,15 +363,64 @@ def _check_python_pkg():
         return False, str(e)
 
 
+def _check_battery():
+    """Return (True, level%) if Android battery > 20%."""
+    udid = os.environ.get("ANH_UDID")
+    if shutil.which("adb") is None:
+        return True, "(skipped — adb not on PATH)"
+    cmd = ["adb"]
+    if udid:
+        cmd += ["-s", udid]
+    cmd += ["shell", "dumpsys", "battery"]
+    try:
+        out = subprocess.check_output(cmd, timeout=5.0, stderr=subprocess.DEVNULL).decode()
+        # `level: 73` line
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("level:"):
+                raw = line.split(":", 1)[1].strip()
+                try:
+                    level = int(raw)
+                except (ValueError, TypeError):
+                    return True, f"(skipped — battery level unreadable: {raw!r})"
+                if level < 20:
+                    return True, f"{level}% (WARN: low — plug in to avoid disconnect)"
+                return True, f"{level}%"
+        return True, "(skipped — level field missing)"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        return True, "(skipped — battery info unavailable)"
+
+
+def _check_screen_unlocked():
+    """Return (True, state) if Android device screen is unlocked. (Doesn't fail if locked,
+    just informs the user.)"""
+    if shutil.which("adb") is None:
+        return True, "(skipped — adb not on PATH)"
+    udid = os.environ.get("ANH_UDID")
+    cmd = ["adb"]
+    if udid:
+        cmd += ["-s", udid]
+    cmd += ["shell", "dumpsys", "power"]
+    try:
+        out = subprocess.check_output(cmd, timeout=5.0, stderr=subprocess.DEVNULL).decode()
+        if "mWakefulness=Awake" in out:
+            return True, "screen on, awake"
+        return True, "screen off (helpers will wake_device() before interacting)"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return True, "(skipped — power info unavailable)"
+
+
 def run_doctor():
     print(f"android-harness {_version() or '(dev)'}\n")
     rc = 0
 
+    adb_hint = install_hint("android-platform-tools", LINUX_ADB_PKGS)
+    node_hint = install_hint("node", LINUX_NODE_PKGS)
     checks = [
-        ("Homebrew package: android-platform-tools (adb)", _check_brew_pkg, ("android-platform-tools",),
-         "brew install android-platform-tools"),
+        ("adb (Android Platform Tools)", _check_adb, (),
+         adb_hint),
         ("Node.js + npm", _check_node, (),
-         "brew install node"),
+         node_hint),
         ("Appium installed", _check_appium_installed, (),
          "npm i -g appium"),
         ("Appium uiautomator2 driver", _check_driver_installed, ("uiautomator2",),
@@ -261,6 +435,10 @@ def run_doctor():
          f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
         ("Android device connected + USB debugging authorized", _check_device, (),
          "Plug in Android, Settings → Developer options → USB debugging → On, tap Allow on prompt"),
+        ("Device battery level (>20% recommended)", _check_battery, (),
+         "Plug in the device to charge. Low battery causes USB disconnects."),
+        ("Screen wakefulness", _check_screen_unlocked, (),
+         "Press power button. Or use wake_device() helper before interacting."),
     ]
     total = len(checks) + 2
 

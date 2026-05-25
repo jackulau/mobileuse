@@ -122,6 +122,105 @@ def appium(script, **args):
     return _send({"method": "appium", "params": {"script": script, "args": args}})["result"]
 
 
+# ---- device state + recovery -----------------------------------------------
+
+class DeviceDisconnectError(RuntimeError):
+    """Device became unreachable mid-call (USB disconnect, Appium timeout, WDA crash)."""
+
+
+def is_locked():
+    """True if screen is locked (passcode shown or display off)."""
+    try:
+        return bool(appium("mobile: isLocked"))
+    except Exception:
+        # Older XCUITest: fall back to deviceInfo.
+        try:
+            info = appium("mobile: deviceInfo")
+            return bool(info.get("displayLocked", False)) if isinstance(info, dict) else False
+        except Exception:
+            return False
+
+
+def wake_device():
+    """Wake screen + dismiss lock screen if shown. No-op if already unlocked.
+
+    Returns True if the device is unlocked after the call, False otherwise.
+    Use before any script that needs to interact when the device may have
+    timed out to lock. Pairs well with @retry_on_disconnect.
+    """
+    if not is_locked():
+        return True  # already awake
+    unlocked = False
+    try:
+        appium("mobile: unlock")
+        unlocked = True
+    except Exception:
+        # No passcode set, or WDA hiccup — try power button as fallback.
+        try:
+            appium("mobile: pressButton", name="power")
+            unlocked = True
+        except Exception:
+            unlocked = False
+    if not unlocked:
+        return False
+    # Confirm post-state — unlock() may have returned without actually unlocking.
+    try:
+        return not is_locked()
+    except Exception:
+        return False
+
+
+def retry_on_disconnect(max_attempts=3, backoff=0.5):
+    """Decorator: retry on device-disconnect errors with backoff + wake.
+
+    Catches RuntimeError messages matching common disconnect signals and
+    transparently restarts the daemon + wakes the device before each retry.
+
+    Usage:
+        @retry_on_disconnect(max_attempts=3)
+        def send_message(text):
+            tap(find(label='Compose'))
+            type_text(text)
+    """
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise ValueError(f"backoff must be >= 0, got {backoff!r}")
+    DISCONNECT_PATTERNS = (
+        "unreachable", "disconnect", "session", "stale",
+        "connection", "timed out", "WebDriver", "wda",
+    )
+
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except RuntimeError as e:
+                    msg = str(e).lower()
+                    if not any(p.lower() in msg for p in DISCONNECT_PATTERNS):
+                        raise
+                    last_err = e
+                    if attempt < max_attempts - 1:
+                        time.sleep(backoff * (2 ** attempt))
+                        try:
+                            from .admin import restart_daemon, ensure_daemon
+                            restart_daemon()
+                            ensure_daemon()
+                            wake_device()
+                        except Exception:
+                            pass
+            raise DeviceDisconnectError(
+                f"{fn.__name__} failed after {max_attempts} attempts. Last error: {last_err}\n"
+                f"Run `iphone-harness --doctor` to diagnose."
+            ) from last_err
+        wrapper.__name__ = fn.__name__
+        wrapper.__doc__ = fn.__doc__
+        return wrapper
+    return decorator
+
+
 # ---- perception ------------------------------------------------------------
 
 ASSISTIVE_TOUCH_X = 390
@@ -284,12 +383,20 @@ def ocr(image_path=None, languages=("en-US",)):
     """
     if image_path is None:
         image_path = screenshot()
+    from mobile_use._platform import OCRNotAvailableError, is_macos
+    if not is_macos():
+        raise OCRNotAvailableError(
+            "ocr() uses the macOS Vision framework — not bundled on this host. "
+            "Linux: install Tesseract (`sudo apt install tesseract-ocr` or "
+            "equivalent) and wrap it yourself, or run mobile_use from a macOS "
+            "host. See SETUP.md#ocr-on-linux for details."
+        )
     try:
         import Vision
         from Foundation import NSURL
     except ImportError as e:
-        raise RuntimeError(
-            "ocr() needs PyObjC (macOS only). Install: pip install pyobjc-framework-Vision"
+        raise OCRNotAvailableError(
+            "ocr() needs PyObjC. Install: pip install pyobjc-framework-Vision"
         ) from e
 
     url = NSURL.fileURLWithPath_(image_path)
@@ -656,6 +763,46 @@ def swipe(x1, y1, x2, y2, duration=0.4):
            fromX=x1, fromY=y1, toX=x2, toY=y2)
 
 
+def press_home():
+    """Go to the home screen. iOS equivalent of Android's press_home()."""
+    appium("mobile: pressButton", name="home")
+
+
+def swipe_back():
+    """Pop the current view by swiping from the left edge.
+
+    iOS has no hardware back button — UINavigationController honors the
+    edge-swipe-from-left gesture. This is the closest equivalent to
+    Android's press_back() for in-app navigation.
+    """
+    sz = window_size()
+    swipe(2, sz["height"] // 2, sz["width"] // 2, sz["height"] // 2, duration=0.3)
+
+
+def press_back():
+    """Alias for swipe_back() — provided for API symmetry with Android.
+
+    iOS has no hardware Back button; this triggers the swipe-from-left
+    gesture that pops the current UINavigationController view.
+    """
+    swipe_back()
+
+
+def open_app_switcher():
+    """Show the iOS App Switcher (swipe up from bottom, pause).
+
+    Android equivalent: press_recents().
+    """
+    sz = window_size()
+    swipe(sz["width"] // 2, sz["height"] - 2, sz["width"] // 2, sz["height"] // 2, duration=0.6)
+    wait(0.6)
+
+
+def press_recents():
+    """Alias for open_app_switcher() — API symmetry with Android."""
+    open_app_switcher()
+
+
 def scroll(direction="down", x=None, y=None):
     """Scroll the current scroll view. `direction` ∈ {up, down, left, right}.
     Pass x, y to scroll within a specific element if needed (XCUITest infers if omitted).
@@ -1009,6 +1156,56 @@ def paste_text(text, predicate=None, index=0):
 
 
 # ---- screen recording ------------------------------------------------------
+
+import base64 as _base64
+
+def record_screen(duration=10, path=None, fps=10, quality="medium"):
+    """Record the device screen for `duration` seconds. Returns the host path.
+
+    Uses Appium's `mobile: startRecordingScreen` + `mobile: stopRecordingScreen`
+    (XCUITest backend), which returns base64-encoded MP4. We decode and write
+    to `path` (or a /tmp default).
+
+    Args:
+        duration: positive seconds to record (XCUITest caps at 1800s ≈ 30min)
+        path: host filesystem path; defaults to /tmp/iph-record-<ts>.mp4
+        fps: frame rate (default 10)
+        quality: 'low' | 'medium' | 'high' | 'photo'
+
+    Returns:
+        Path string of the saved .mp4 file.
+    """
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ValueError(f"record_screen duration must be > 0, got {duration!r}")
+    if duration > 1800:
+        raise ValueError(f"record_screen duration must be <= 1800s (got {duration}); XCUITest cap")
+    if path is None:
+        path = str(ipc._TMP / f"iph-record-{int(time.time())}.mp4")
+    # Ensure parent dir exists + path isn't a directory.
+    import os as _os
+    if _os.path.isdir(path):
+        raise IsADirectoryError(f"record_screen path is a directory: {path}")
+    parent = _os.path.dirname(_os.path.abspath(path))
+    if parent and not _os.path.exists(parent):
+        _os.makedirs(parent, exist_ok=True)
+    try:
+        appium("mobile: startRecordingScreen", timeLimit=int(duration) + 5,
+               videoFps=int(fps), videoQuality=quality)
+    except Exception as e:
+        raise RuntimeError(
+            f"start screen recording failed: {e}\n"
+            f"  Likely cause: XCUITest version doesn't support `mobile: startRecordingScreen`.\n"
+            f"  Try: `appium driver install --source=npm appium-xcuitest-driver@latest`."
+        )
+    time.sleep(duration)
+    try:
+        b64 = appium("mobile: stopRecordingScreen")
+    except Exception as e:
+        raise RuntimeError(f"stop screen recording failed: {e}")
+    with open(path, "wb") as f:
+        f.write(_base64.b64decode(b64))
+    return path
+
 
 def start_screen_recording():
     """Start a screen recording. Installs the CC tile if missing.
