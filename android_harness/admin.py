@@ -7,10 +7,32 @@ import time
 import urllib.error
 import urllib.request
 
+from mobile_use._platform import (
+    LINUX_ADB_PKGS,
+    LINUX_NODE_PKGS,
+    install_hint,
+    is_linux,
+    is_macos,
+)
+
 from . import _ipc as ipc
 
 NAME = os.environ.get("ANH_NAME", "default")
 APPIUM_URL = os.environ.get("ANH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+def is_remote_daemon(name=None):
+    """True when ANH_CONNECT points at a TCP daemon we don't manage locally.
+    Same client-only semantics as iphone_harness — ensure_daemon won't spawn.
+    """
+    spec = os.environ.get("ANH_CONNECT")
+    if not spec:
+        return False
+    try:
+        kind, *_ = ipc.parse_endpoint(spec)
+    except ValueError:
+        return False
+    return kind == "tcp"
 
 
 def _version():
@@ -42,12 +64,11 @@ def _pid_alive(pid):
 
 
 def cleanup_stale(name=None):
-    """Remove leftover .pid + .sock from a dead daemon (no process behind them)."""
+    """Remove leftover .pid + (for AF_UNIX) .sock from a dead daemon.
+    TCP endpoints have no socket file — only pidfile gets cleaned."""
     name = name or NAME
     pid_path = ipc.pid_path(name)
-    sock_path_str = ipc.sock_addr(name)
-    from pathlib import Path as _P
-    sock_path = _P(sock_path_str)
+    endpoint = ipc.bind_endpoint(name)
 
     if ipc.ping(name, timeout=0.3):
         return False
@@ -71,17 +92,42 @@ def cleanup_stale(name=None):
         except FileNotFoundError:
             pass
 
-    if sock_path.exists():
-        try:
-            sock_path.unlink()
-            cleaned = True
-        except FileNotFoundError:
-            pass
+    if endpoint[0] == "unix":
+        from pathlib import Path as _P
+        sock_path = _P(endpoint[1])
+        if sock_path.exists():
+            try:
+                sock_path.unlink()
+                cleaned = True
+            except FileNotFoundError:
+                pass
 
     return cleaned
 
 
 def ensure_daemon(wait=30.0, name=None, env=None):
+    """Idempotent. In client-only mode (ANH_CONNECT=tcp://<remote>:port),
+    NEVER spawns locally — only pings + raises remediation on failure."""
+    name_eff = name or NAME
+
+    if is_remote_daemon(name_eff):
+        spec = os.environ.get("ANH_CONNECT", "")
+        if daemon_alive(name_eff):
+            return
+        raise RuntimeError(
+            f"android-harness: remote daemon unreachable at {spec}.\n"
+            f"  This host is in client-only mode (ANH_CONNECT set).\n"
+            f"  Checks on the remote host:\n"
+            f"    - daemon running?  (ssh host 'pgrep -fa android_harness.daemon')\n"
+            f"    - bound to TCP?    (ssh host 'lsof -iTCP -sTCP:LISTEN | grep python')\n"
+            f"  Prefer `ssh -L <port>:127.0.0.1:<port> <host>` over exposing\n"
+            f"  the daemon on 0.0.0.0 — the RPC is unauthenticated."
+        )
+
+    _ensure_daemon_local(wait=wait, name=name, env=env)
+
+
+def _ensure_daemon_local(wait=30.0, name=None, env=None):
     name = name or NAME
     if daemon_alive(name):
         try:
@@ -194,7 +240,8 @@ def _check_device():
             return True, f"connected ({udid})"
         return False, f"serial {udid} not in `adb devices`: {lines!r}"
     except FileNotFoundError:
-        return False, "`adb` not installed (brew install android-platform-tools)"
+        hint = install_hint("android-platform-tools", LINUX_ADB_PKGS)
+        return False, f"`adb` not installed ({hint})"
     except Exception as e:
         return False, str(e)
 
@@ -208,8 +255,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ANDROID_REQUIRED_ENV = ("ANH_UDID",)
 
 
+def _check_adb():
+    """Return (True, path) if adb is on PATH. Distro-neutral check.
+
+    On macOS, this catches both Homebrew (`brew install android-platform-tools`)
+    and Android Studio installs. On Linux, this catches every distro that has
+    an `android-tools`/`android-tools-adb` package.
+    """
+    p = shutil.which("adb")
+    if p is None:
+        return False, "adb not on PATH"
+    try:
+        v = subprocess.check_output([p, "version"], timeout=3.0,
+                                    stderr=subprocess.STDOUT).decode().strip().splitlines()[0]
+        return True, v
+    except Exception:
+        return True, p  # binary exists; version probe is bonus
+
+
 def _check_brew_pkg(pkg):
-    if sys.platform != "darwin":
+    """Legacy shim — kept so external callers + tests still import this."""
+    if not is_macos():
         return True, "(skipped — non-macOS)"
     brew = shutil.which("brew")
     if brew is None:
@@ -358,11 +424,13 @@ def run_doctor():
     print(f"android-harness {_version() or '(dev)'}\n")
     rc = 0
 
+    adb_hint = install_hint("android-platform-tools", LINUX_ADB_PKGS)
+    node_hint = install_hint("node", LINUX_NODE_PKGS)
     checks = [
-        ("Homebrew package: android-platform-tools (adb)", _check_brew_pkg, ("android-platform-tools",),
-         "brew install android-platform-tools"),
+        ("adb (Android Platform Tools)", _check_adb, (),
+         adb_hint),
         ("Node.js + npm", _check_node, (),
-         "brew install node"),
+         node_hint),
         ("Appium installed", _check_appium_installed, (),
          "npm i -g appium"),
         ("Appium uiautomator2 driver", _check_driver_installed, ("uiautomator2",),

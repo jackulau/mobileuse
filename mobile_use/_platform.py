@@ -195,6 +195,45 @@ def linux_install_cmd(pkgs_per_manager, manager=None, prefix=_UNSET):
     return None
 
 
+def install_hint(brew_pkg: str, pkgs_per_manager: dict) -> str:
+    """One-line install command for the current host.
+
+    On macOS → `brew install {brew_pkg}` (the original behavior).
+    On Linux → the apt/dnf/pacman/zypper/apk command for the detected pkg
+    manager, or a multi-line list of all five if the manager is unknown.
+
+    Used in doctor remediation messages so Linux users don't see
+    `brew install …` they can't act on.
+    """
+    if is_macos():
+        return f"brew install {brew_pkg}"
+    if not is_linux():
+        return f"(install {brew_pkg} via your OS package manager)"
+    pm = linux_pkg_manager()
+    if pm and pm in pkgs_per_manager:
+        pkgs = " ".join(pkgs_per_manager[pm])
+        if pm == "apt":
+            return f"sudo apt install {pkgs}"
+        if pm == "dnf":
+            return f"sudo dnf install {pkgs}"
+        if pm == "pacman":
+            return f"sudo pacman -S {pkgs}"
+        if pm == "zypper":
+            return f"sudo zypper install {pkgs}"
+        if pm == "apk":
+            return f"sudo apk add {pkgs}"
+    # Unknown distro — show all known managers so the user can pick.
+    lines = ["install via your distro's package manager — options:"]
+    for mgr in ("apt", "dnf", "pacman", "zypper", "apk"):
+        if mgr in pkgs_per_manager:
+            pkgs = " ".join(pkgs_per_manager[mgr])
+            verb = {"apt": "apt install", "dnf": "dnf install",
+                    "pacman": "pacman -S", "zypper": "zypper install",
+                    "apk": "apk add"}[mgr]
+            lines.append(f"     - {mgr}: sudo {verb} {pkgs}")
+    return "\n".join(lines)
+
+
 def host_os_label() -> str:
     """Short label for the current host. Used in logs and doctor headers."""
     if is_macos():
