@@ -197,6 +197,53 @@ pool.broadcast_android(lambda d: d.press_home())
 
 Each device gets its own named daemon instance (`IPH_NAME` / `ANH_NAME`) with separate sockets, so they don't collide.
 
+## Headed mode — watch the device while it runs
+
+By default mobile-use is **headless**: scripts run, the daemon talks to the
+device, you see no UI. Add `--headed` to spin up a local MJPEG viewer in
+your browser and watch the live device screen mirror while the script runs:
+
+```bash
+mobile-use --ios --headed -c 'tap_at_xy(100, 200); time.sleep(2)'
+# → opens http://127.0.0.1:<random-port>/ in your default browser
+# → live mirror at ~6 fps, JPEG quality 60 (knobs in mobile_use/viewer/server.py)
+```
+
+The viewer is read-only — it shows what the device is doing; it doesn't
+take input. Use `--headless` (or omit the flag) to skip it. Works on iOS
+and Android.
+
+Quality knobs (via Python API, when running in agent mode):
+
+```python
+from mobile_use.viewer.server import ViewerServer
+v = ViewerServer(platform="ios", fps=12, quality=80, max_dim=1200)
+v.start(); print(v.url)
+# ...
+v.stop()
+```
+
+## iOS from Windows / Linux
+
+Windows hosts can't build WebDriverAgent (no Xcode). Drive iOS via a Mac
+on the network running the daemon over TCP:
+
+```bash
+# On the Mac (one time): full Part A in SETUP.md
+# On the Mac (each session):
+IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
+
+# On Windows / Linux:
+ssh -L 8763:127.0.0.1:8763 user@mac.local           # SSH tunnel (recommended)
+mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c 'print(active_app())'
+
+# Add --headed to also see the live screen mirror in your local browser:
+mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 --headed -c '...'
+```
+
+Full walkthrough + security caveat: SETUP.md → "iOS from Windows / Linux
+(remote Mac bridge)".
+
 ## Skills
 
 ### iOS Interaction Skills

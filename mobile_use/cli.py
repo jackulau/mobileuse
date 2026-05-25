@@ -74,6 +74,31 @@ def _check_env_for_platform(platform):
     return None
 
 
+def _maybe_start_viewer(platform):
+    """If MOBILE_USE_HEADED=1, spawn the MJPEG viewer + open browser. Returns
+    the ViewerServer (or None). Caller must call .stop() at end. Failures
+    log + return None — viewer is a "nice to have", never blocks the command.
+    """
+    if os.environ.get("MOBILE_USE_HEADED") != "1":
+        return None
+    try:
+        from mobile_use.viewer.server import ViewerServer
+        v = ViewerServer(platform=platform)
+        v.start()
+        print(f"[mobile-use] live viewer at {v.url}  (--headless to disable)",
+              file=sys.stderr)
+        try:
+            import webbrowser
+            webbrowser.open(v.url)
+        except Exception:
+            pass
+        return v
+    except Exception as e:
+        print(f"[mobile-use] viewer failed to start: {e} (continuing without)",
+              file=sys.stderr)
+        return None
+
+
 def _run_ios(args):
     """Delegate to iphone-harness."""
     from iphone_harness.admin import ensure_daemon, restart_daemon, run_doctor
@@ -99,21 +124,26 @@ def _run_ios(args):
         ensure_daemon()
     except RuntimeError as e:
         sys.exit(f"{e}")
+
+    viewer = _maybe_start_viewer("ios")
     ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
     ns["__builtins__"] = __builtins__
     try:
-        exec(args[1], ns)
-    except SystemExit:
-        raise
-    except SyntaxError as e:
-        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
-    except Exception as e:
-        # Show the user's script error without the cli.py traceback noise.
-        import traceback
-        tb = traceback.format_exc()
-        # Strip the outer cli.py frame so the user sees their script's stack only.
-        sys.stderr.write(tb)
-        sys.exit(1)
+        try:
+            exec(args[1], ns)
+        except SystemExit:
+            raise
+        except SyntaxError as e:
+            sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
+        except Exception as e:
+            # Show the user's script error without the cli.py traceback noise.
+            import traceback
+            tb = traceback.format_exc()
+            sys.stderr.write(tb)
+            sys.exit(1)
+    finally:
+        if viewer is not None:
+            viewer.stop()
 
 
 def _run_android(args):
@@ -141,18 +171,24 @@ def _run_android(args):
         ensure_daemon()
     except RuntimeError as e:
         sys.exit(f"{e}")
+
+    viewer = _maybe_start_viewer("android")
     ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
     ns["__builtins__"] = __builtins__
     try:
-        exec(args[1], ns)
-    except SystemExit:
-        raise
-    except SyntaxError as e:
-        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
-    except Exception:
-        import traceback
-        sys.stderr.write(traceback.format_exc())
-        sys.exit(1)
+        try:
+            exec(args[1], ns)
+        except SystemExit:
+            raise
+        except SyntaxError as e:
+            sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
+        except Exception:
+            import traceback
+            sys.stderr.write(traceback.format_exc())
+            sys.exit(1)
+    finally:
+        if viewer is not None:
+            viewer.stop()
 
 
 def _doctor_both():
@@ -309,7 +345,11 @@ def main():
         if platform == "android" or platform is None:
             os.environ["ANH_CONNECT"] = remote_daemon
 
-    # --headed / --headless flag goes into env so subprocess paths inherit it.
+    # --headed / --headless: tri-state. None = leave MOBILE_USE_HEADED untouched
+    # (default off). True/False = explicit user choice; pass via mutable env so
+    # subprocess-spawn paths (agent loop, etc) inherit, but restore on exit so
+    # in-process pytest runs don't leak state into sibling tests.
+    _prior_headed = os.environ.get("MOBILE_USE_HEADED")
     if headed is True:
         os.environ["MOBILE_USE_HEADED"] = "1"
     elif headed is False:
@@ -391,10 +431,19 @@ def main():
                 "\nRun `mobile-use --doctor` to check what's connected."
             )
 
-    if platform == "ios":
-        _run_ios(remaining)
-    elif platform == "android":
-        _run_android(remaining)
+    try:
+        if platform == "ios":
+            _run_ios(remaining)
+        elif platform == "android":
+            _run_android(remaining)
+    finally:
+        # Restore prior MOBILE_USE_HEADED so in-process pytest doesn't leak
+        # state between tests that call cli.main() with different --headed.
+        if headed is not None:
+            if _prior_headed is None:
+                os.environ.pop("MOBILE_USE_HEADED", None)
+            else:
+                os.environ["MOBILE_USE_HEADED"] = _prior_headed
 
 
 if __name__ == "__main__":
