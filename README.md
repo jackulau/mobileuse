@@ -43,9 +43,39 @@ mobile-use quickstart --autostart-appium   # spawn Appium server in background
 ```
 
 See [`SETUP.md`](SETUP.md) for the manual / per-step appendix, including a
-[troubleshooting decision tree](SETUP.md#part-c--troubleshooting). Linux users:
-the Android path works out-of-the-box on apt/dnf/pacman systems (iOS still needs
-macOS + Xcode).
+[troubleshooting decision tree](SETUP.md#part-c--troubleshooting).
+
+### Linux
+
+Android-on-Linux is a first-class target. `mobile-use bootstrap` auto-detects
+your package manager (apt, dnf, pacman, zypper, apk) and installs `adb`, `node`,
+and the Appium uiautomator2 driver natively — no Homebrew required.
+
+```bash
+# Linux host (any apt/dnf/pacman/zypper/apk distro):
+pip install -e .
+mobile-use bootstrap --android-only
+mobile-use init --android-only
+mobile-use quickstart --android
+```
+
+**iOS on Linux** requires a Mac somewhere in the loop (Xcode + Apple
+codesigning are macOS-only by Apple). Two patterns:
+
+- **Remote daemon (TCP)** — Linux runs zero daemon locally; talks to a
+  remote `iphone-harness` daemon on a Mac via TCP:
+  ```bash
+  # On the Mac (one shot):
+  IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
+  # On Linux (in another shell):
+  ssh -L 8763:127.0.0.1:8763 <mac-host>
+  mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c 'print(active_app())'
+  ```
+- **Remote Appium URL** — `IPH_APPIUM_URL=http://<mac>:4723` lets a local
+  iphone-harness on Linux talk to a Mac running just Appium+WDA.
+
+See [`SETUP.md` → "iOS from Windows / Linux"](SETUP.md#ios-from-windows--linux)
+for the full walkthrough.
 
 ### Runtime helpers (no device pain)
 

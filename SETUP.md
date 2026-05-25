@@ -119,17 +119,26 @@ Android setup is significantly simpler than iOS — no signing, no Xcode, no pro
 
 ## B1. System tools
 
-### Linux (Ubuntu/Debian/Fedora/Arch)
+### Linux setup
+
+`mobile-use bootstrap --android-only` autodetects the distro via `/etc/os-release`
+and runs the right command. If you'd rather install by hand:
 
 ```bash
-# Ubuntu / Debian / Mint:
+# Ubuntu / Debian / Mint / Pop / Raspbian:
 sudo apt install -y android-tools-adb nodejs npm
 
-# Fedora / RHEL / Rocky:
+# Fedora / RHEL / Rocky / AlmaLinux:
 sudo dnf install -y android-tools nodejs npm
 
-# Arch / Manjaro:
+# Arch / Manjaro / EndeavourOS:
 sudo pacman -S --noconfirm android-tools nodejs npm
+
+# openSUSE / SLES:
+sudo zypper install -y android-tools nodejs npm
+
+# Alpine:
+sudo apk add android-tools nodejs npm
 
 # Then (any Linux):
 npm i -g appium
@@ -137,7 +146,20 @@ appium driver install uiautomator2
 pip install -e .
 ```
 
-`mobile-use bootstrap` autodetects the Linux package manager via `/etc/os-release`.
+`mobile-use --doctor` then verifies the chain. The doctor's remediation strings
+are platform-aware: on Linux you'll see `sudo apt install …` / `sudo dnf install …`
+instead of `brew install …`.
+
+### Linux verify (Docker, no local install)
+
+Inside the repo:
+
+```bash
+docker build -f Dockerfile.linux-test -t mobile-use-linux-test .
+docker run --rm mobile-use-linux-test python3 -m pytest -q
+```
+
+This is the same image GitHub Actions runs on the Ubuntu matrix cell.
 
 ### macOS
 
@@ -240,6 +262,69 @@ for el in ui_tree(visible_only=True)[:5]:
     print(" ", el["type"], "|", el["text"] or el["content_desc"])
 '
 ```
+
+---
+
+# Part B+ — iOS from Windows / Linux
+
+Xcode + Apple codesigning are macOS-only. So is the WebDriverAgent build.
+The pragmatic answer is to keep one Mac in the loop and drive it remotely.
+Both patterns are first-class supported.
+
+## Pattern 1 — Remote daemon (recommended)
+
+The Mac runs `iphone-harness` daemon bound to TCP. The Linux/Windows host
+runs the CLI and talks to the remote daemon. Zero local daemon, zero
+Xcode dependency on the client.
+
+```bash
+# On the Mac (one-time setup):
+mobile-use bootstrap --ios-only
+mobile-use ios build-wda
+mobile-use init --ios-only            # writes .env with IPH_UDID etc.
+
+# On the Mac (each run):
+IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
+
+# On the Linux / Windows host (in another shell):
+ssh -L 8763:127.0.0.1:8763 <mac-host>     # tunnel — keeps the RPC port loopback
+
+# On the Linux / Windows host (driving iOS):
+mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c 'print(active_app())'
+```
+
+The harness's `iphone-harness --doctor` skips Xcode + WDA-signing checks
+when it sees `IPH_CONNECT=tcp://…` — those run on the Mac, not here.
+
+**Security**: the RPC is unauthenticated. Always tunnel over SSH (above)
+rather than binding the daemon on `0.0.0.0`.
+
+## Pattern 2 — Remote Appium URL
+
+The Mac runs only Appium + WDA. The Linux host runs the full
+iphone-harness daemon locally, but its Appium calls hit the remote Mac.
+
+```bash
+# On the Mac:
+appium --base-path /
+
+# On Linux:
+export IPH_APPIUM_URL=http://<mac>:4723
+mobile-use --ios --doctor
+mobile-use --ios -c 'print(active_app())'
+```
+
+In this mode the doctor's `Xcode` and `WebDriverAgent signed` checks are
+marked `OK: (skipped — Xcode is macOS-only; drive iOS from Linux via
+remote IPH_APPIUM_URL)`.
+
+## Why no fully-local Linux iOS path?
+
+Apple gates iOS automation behind Xcode-built and -signed `WebDriverAgent.app`.
+Linux can install [libimobiledevice](https://libimobiledevice.org/) and pair
+an iPhone, but it can't build/sign a runner from scratch — the toolchain is
+Apple-only. A prebuilt `.ipa` would still need provisioning-profile renewal
+from a Mac. The remote patterns above are simpler and don't drift.
 
 ---
 
