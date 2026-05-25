@@ -127,16 +127,18 @@ def test_check_wda_signing_returns_ok_on_linux_remote(monkeypatch):
 # ---- CLI flag: --remote-daemon ------------------------------------------
 
 def test_cli_remote_daemon_flag_sets_iph_connect(monkeypatch, tmp_path):
-    """`mobile-use --ios --remote-daemon tcp://...` sets IPH_CONNECT for downstream."""
+    """`mobile-use --ios --remote-daemon tcp://...` sets IPH_CONNECT for downstream.
+
+    cli.main() mutates os.environ['IPH_CONNECT'] directly (not through
+    monkeypatch), so this test takes a snapshot of os.environ and restores
+    after — otherwise the IPH_CONNECT leak corrupts test_ipc's mock daemon
+    spawn (it inherits the env and thinks it's in remote mode).
+    """
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("IPH_UDID", "abc123")
-    # Don't actually run; just verify env wiring via cli's argv parser.
-    # The cli passes through to iphone-harness, which we'll spy on by intercepting
-    # the platform module entry.
+    monkeypatch.delenv("IPH_CONNECT", raising=False)
     from mobile_use import cli
 
-    # We need a minimal env-setting smoke test. The flag handler should set
-    # os.environ["IPH_CONNECT"] before invoking the platform _run_ function.
     captured_env = {}
 
     def fake_run_ios(args):
@@ -144,13 +146,22 @@ def test_cli_remote_daemon_flag_sets_iph_connect(monkeypatch, tmp_path):
         return 0
 
     monkeypatch.setattr(cli, "_run_ios", fake_run_ios)
-    # Stub the doctor too in case the flag also wires that
     monkeypatch.setattr("iphone_harness.admin.run_doctor", lambda: 0)
 
-    sys.argv = ["mobile-use", "--ios", "--remote-daemon", "tcp://127.0.0.1:8763", "-c", "pass"]
-    try:
-        cli.main()
-    except SystemExit:
-        pass
+    monkeypatch.setattr(sys, "argv",
+                        ["mobile-use", "--ios", "--remote-daemon", "tcp://127.0.0.1:8763", "-c", "pass"])
 
-    assert captured_env.get("IPH_CONNECT") == "tcp://127.0.0.1:8763"
+    saved_iph_connect = os.environ.get("IPH_CONNECT")
+    try:
+        try:
+            cli.main()
+        except SystemExit:
+            pass
+        assert captured_env.get("IPH_CONNECT") == "tcp://127.0.0.1:8763"
+    finally:
+        # Belt + suspenders: ensure no leak even if monkeypatch's delenv was
+        # bypassed by direct os.environ mutation in cli.main().
+        if saved_iph_connect is None:
+            os.environ.pop("IPH_CONNECT", None)
+        else:
+            os.environ["IPH_CONNECT"] = saved_iph_connect

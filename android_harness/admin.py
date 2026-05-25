@@ -22,9 +22,9 @@ APPIUM_URL = os.environ.get("ANH_APPIUM_URL", "http://127.0.0.1:4723")
 
 
 def is_remote_daemon(name=None):
-    """True when ANH_CONNECT points at a TCP daemon we don't manage locally.
-    Same client-only semantics as iphone_harness — ensure_daemon won't spawn.
-    """
+    """True when ANH_CONNECT points at a daemon we don't manage locally.
+    Same client-only mode as iphone_harness — caller is responsible for the
+    remote daemon, ensure_daemon won't spawn locally."""
     spec = os.environ.get("ANH_CONNECT")
     if not spec:
         return False
@@ -65,7 +65,9 @@ def _pid_alive(pid):
 
 def cleanup_stale(name=None):
     """Remove leftover .pid + (for AF_UNIX) .sock from a dead daemon.
-    TCP endpoints have no socket file — only pidfile gets cleaned."""
+
+    TCP endpoints (ANH_BIND=tcp://...) have no socket file to clean.
+    """
     name = name or NAME
     pid_path = ipc.pid_path(name)
     endpoint = ipc.bind_endpoint(name)
@@ -92,6 +94,7 @@ def cleanup_stale(name=None):
         except FileNotFoundError:
             pass
 
+    # TCP endpoint (e.g. tcp://127.0.0.1:8763) has no file — skip socket cleanup.
     if endpoint[0] == "unix":
         from pathlib import Path as _P
         sock_path = _P(endpoint[1])
@@ -106,29 +109,21 @@ def cleanup_stale(name=None):
 
 
 def ensure_daemon(wait=30.0, name=None, env=None):
-    """Idempotent. In client-only mode (ANH_CONNECT=tcp://<remote>:port),
-    NEVER spawns locally — only pings + raises remediation on failure."""
-    name_eff = name or NAME
+    name = name or NAME
 
-    if is_remote_daemon(name_eff):
+    if is_remote_daemon(name):
         spec = os.environ.get("ANH_CONNECT", "")
-        if daemon_alive(name_eff):
+        if daemon_alive(name):
             return
         raise RuntimeError(
             f"android-harness: remote daemon unreachable at {spec}.\n"
             f"  This host is in client-only mode (ANH_CONNECT set).\n"
             f"  Checks on the remote host:\n"
-            f"    - daemon running?  (ssh host 'pgrep -fa android_harness.daemon')\n"
-            f"    - bound to TCP?    (ssh host 'lsof -iTCP -sTCP:LISTEN | grep python')\n"
-            f"  Prefer `ssh -L <port>:127.0.0.1:<port> <host>` over exposing\n"
-            f"  the daemon on 0.0.0.0 — the RPC is unauthenticated."
+            f"    - daemon running?  (ssh remote 'pgrep -fa android_harness.daemon')\n"
+            f"    - bound to TCP?    (ssh remote 'lsof -iTCP -sTCP:LISTEN | grep python')\n"
+            f"    - reachable port?  (telnet/netstat to confirm)\n"
         )
 
-    _ensure_daemon_local(wait=wait, name=name, env=env)
-
-
-def _ensure_daemon_local(wait=30.0, name=None, env=None):
-    name = name or NAME
     if daemon_alive(name):
         try:
             s, token = ipc.connect(name, timeout=3.0)
@@ -256,12 +251,7 @@ ANDROID_REQUIRED_ENV = ("ANH_UDID",)
 
 
 def _check_adb():
-    """Return (True, path) if adb is on PATH. Distro-neutral check.
-
-    On macOS, this catches both Homebrew (`brew install android-platform-tools`)
-    and Android Studio installs. On Linux, this catches every distro that has
-    an `android-tools`/`android-tools-adb` package.
-    """
+    """Return (True, path) if adb is on PATH. Distro-neutral check."""
     p = shutil.which("adb")
     if p is None:
         return False, "adb not on PATH"
@@ -270,7 +260,7 @@ def _check_adb():
                                     stderr=subprocess.STDOUT).decode().strip().splitlines()[0]
         return True, v
     except Exception:
-        return True, p  # binary exists; version probe is bonus
+        return True, p
 
 
 def _check_brew_pkg(pkg):

@@ -28,19 +28,14 @@ APPIUM_URL = os.environ.get("IPH_APPIUM_URL", "http://127.0.0.1:4723")
 
 
 def is_remote_daemon(name=None):
-    """True when IPH_CONNECT points at a TCP daemon we don't manage locally
-    (Windows/Linux client-only mode driving a remote Mac running Appium+WDA).
+    """True when IPH_CONNECT points at a daemon we don't manage locally
+    (Windows/Linux client-only mode driving a remote Mac).
 
-    When True, ensure_daemon() never spawns or restarts — only pings. The
-    operator owns the remote daemon's lifecycle. Typical use:
-
-        # on the Mac:
-        IPH_BIND=tcp://127.0.0.1:8763 iphone-harness -c 'pass'
-        # on Windows, via SSH tunnel:
-        ssh -L 8763:127.0.0.1:8763 mac
-        IPH_CONNECT=tcp://127.0.0.1:8763 mobile-use --ios -c '...'
-
-    Or via the CLI flag: `mobile-use --ios --remote-daemon tcp://...`.
+    Heuristic: IPH_CONNECT is set AND parses as a TCP endpoint. We trust the
+    operator's intent — if they set IPH_CONNECT=tcp://127.0.0.1:8763 with a
+    daemon running on the same host, that's still considered "remote" from
+    admin's perspective (ensure_daemon won't try to spawn locally; user is
+    responsible for the daemon). This keeps the rule simple: TCP = manual.
     """
     spec = os.environ.get("IPH_CONNECT")
     if not spec:
@@ -85,7 +80,8 @@ def cleanup_stale(name=None):
 
     Called before spawn to keep stale state from a kill -9 / OOM / crash from
     confusing the next ensure_daemon. Safe to call when no files exist or when
-    a live daemon owns them — it preserves anything still in use.
+    a live daemon owns them. TCP endpoints (IPH_BIND=tcp://...) have no socket
+    file to clean — only the pidfile.
     """
     name = name or NAME
     pid_path = ipc.pid_path(name)
@@ -96,6 +92,9 @@ def cleanup_stale(name=None):
         return False
 
     cleaned = False
+    # Read PID file if present; only unlink if the recorded process is gone.
+    # Tolerate binary garbage (UnicodeDecodeError) + empty string (ValueError) +
+    # permission-denied (PermissionError) — all mean "treat as stale, remove".
     try:
         recorded = int(pid_path.read_text().strip())
     except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
@@ -114,7 +113,7 @@ def cleanup_stale(name=None):
         except FileNotFoundError:
             pass
 
-    # TCP endpoints (tcp://...) have no socket file — only AF_UNIX needs cleanup.
+    # TCP endpoint (e.g. tcp://127.0.0.1:8763) has no file — skip socket cleanup.
     if endpoint[0] == "unix":
         from pathlib import Path as _P
         sock_path = _P(endpoint[1])
@@ -131,9 +130,9 @@ def cleanup_stale(name=None):
 def ensure_daemon(wait=30.0, name=None, env=None):
     """Spawn the daemon if no live one is reachable. Idempotent.
 
-    In client-only mode (IPH_CONNECT=tcp://<remote>:port — e.g. from a
-    Windows or Linux host driving a remote Mac), this NEVER spawns locally.
-    Only pings; on failure raises a remote-side checklist.
+    In client-only mode (IPH_CONNECT=tcp://<remote>:port — e.g. from a Windows
+    or Linux host driving a remote Mac), this function NEVER spawns a local
+    daemon. It only pings; on failure it raises a remote-side checklist.
     """
     name = name or NAME
 
@@ -296,7 +295,7 @@ def _check_device():
 def _check_libimobiledevice():
     """Return (True, info) if libimobiledevice tools are available.
 
-    On macOS, asks Homebrew. On Linux, checks `idevice_id` on PATH (typical
+    On macOS: asks Homebrew. On Linux: checks `idevice_id` on PATH (typical
     apt/dnf/pacman libimobiledevice package installs this binary). Linux
     users don't have brew — checking the binary directly is the honest
     test for "are the tools usable".
