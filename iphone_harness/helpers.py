@@ -383,12 +383,20 @@ def ocr(image_path=None, languages=("en-US",)):
     """
     if image_path is None:
         image_path = screenshot()
+    from mobile_use._platform import OCRNotAvailableError, is_macos
+    if not is_macos():
+        raise OCRNotAvailableError(
+            "ocr() uses the macOS Vision framework — not bundled on this host. "
+            "Linux: install Tesseract (`sudo apt install tesseract-ocr` or "
+            "equivalent) and wrap it yourself, or run mobile_use from a macOS "
+            "host. See SETUP.md#ocr-on-linux for details."
+        )
     try:
         import Vision
         from Foundation import NSURL
     except ImportError as e:
-        raise RuntimeError(
-            "ocr() needs PyObjC (macOS only). Install: pip install pyobjc-framework-Vision"
+        raise OCRNotAvailableError(
+            "ocr() needs PyObjC. Install: pip install pyobjc-framework-Vision"
         ) from e
 
     url = NSURL.fileURLWithPath_(image_path)

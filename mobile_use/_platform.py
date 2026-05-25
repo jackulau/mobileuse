@@ -195,6 +195,16 @@ def linux_install_cmd(pkgs_per_manager, manager=None, prefix=_UNSET):
     return None
 
 
+class OCRNotAvailableError(RuntimeError):
+    """Raised when ocr() is invoked on a host that has no OCR backend.
+
+    Currently macOS is the only platform with a bundled OCR backend
+    (Apple Vision via PyObjC). Linux + other hosts must install Tesseract
+    or another OCR engine themselves. The error message points at
+    SETUP.md for the install path.
+    """
+
+
 def install_hint(brew_pkg: str, pkgs_per_manager: dict) -> str:
     """One-line install command for the current host.
 
