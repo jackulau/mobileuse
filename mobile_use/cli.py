@@ -12,6 +12,21 @@ import subprocess
 import sys
 
 
+def _write_user_traceback():
+    """Print traceback of the current exception with cli.py frames stripped.
+
+    The user's -c script runs inside exec() inside _run_ios/_run_android.
+    Those wrappers leak `File ".../cli.py", line N, in _run_ios` frames
+    above the user's actual error. Walk down tb_next until we leave cli.py,
+    then format only the remaining (user-visible) frames + exception.
+    """
+    import traceback
+    exc_type, exc, tb = sys.exc_info()
+    while tb is not None and tb.tb_frame.f_code.co_filename.endswith("cli.py"):
+        tb = tb.tb_next
+    sys.stderr.write("".join(traceback.format_exception(exc_type, exc, tb)))
+
+
 def _detect_platform():
     """Auto-detect which platform to use based on connected devices.
 
@@ -62,81 +77,42 @@ def _check_env_for_platform(platform):
     key = "IPH_UDID" if platform == "ios" else "ANH_UDID"
     if os.environ.get(key, "").strip():
         return None
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env_path = os.path.join(repo_root, ".env")
-    alt_path = os.path.join(repo_root, "agent-workspace", ".env")
-    if not os.path.exists(env_path) and not os.path.exists(alt_path):
-        return (
-            f"No .env file found and {key} not set in environment.\n"
-            f"   Fix: run `mobile-use init` (auto-fills from connected device).\n"
-            f"   Or set {key}=<udid> manually before running."
-        )
-    return None
+    # Only check .env in the current working directory. Auto-discovering one
+    # from the install location would silently use the developer's .env in
+    # anyone else's process — and is what made test_e2e_minus_c... fail.
+    if os.path.exists(os.path.join(os.getcwd(), ".env")):
+        return None
+    return (
+        f"No .env file found and {key} not set in environment.\n"
+        f"   Fix: run `mobile-use init` (auto-fills from connected device).\n"
+        f"   Or set {key}=<udid> manually before running."
+    )
 
 
 def _run_ios(args):
     """Delegate to iphone-harness."""
-    from iphone_harness.admin import ensure_daemon, restart_daemon, run_doctor
-    import iphone_harness.helpers as _helpers
-
     if not args or args[0] in {"-h", "--help"}:
         print("mobile-use (iOS mode) — run `mobile-use --help` for full usage")
         return
     if args[0] == "--doctor":
+        from iphone_harness.admin import run_doctor
         sys.exit(run_doctor())
     if args[0] == "--reload":
+        from iphone_harness.admin import restart_daemon
         restart_daemon()
         print("iOS daemon stopped — will respawn on next call")
         return
     if args[0] != "-c" or len(args) < 2:
         sys.exit('Usage: mobile-use --ios -c "print(active_app())"')
 
+    # Check env BEFORE importing helpers — helpers auto-loads .env from the
+    # install directory which would mask the missing-env condition.
     env_err = _check_env_for_platform("ios")
     if env_err:
         sys.exit(env_err)
 
-    try:
-        ensure_daemon()
-    except RuntimeError as e:
-        sys.exit(f"{e}")
-    ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
-    ns["__builtins__"] = __builtins__
-    try:
-        exec(args[1], ns)
-    except SystemExit:
-        raise
-    except SyntaxError as e:
-        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
-    except Exception as e:
-        # Show the user's script error without the cli.py traceback noise.
-        import traceback
-        tb = traceback.format_exc()
-        # Strip the outer cli.py frame so the user sees their script's stack only.
-        sys.stderr.write(tb)
-        sys.exit(1)
-
-
-def _run_android(args):
-    """Delegate to android-harness."""
-    from android_harness.admin import ensure_daemon, restart_daemon, run_doctor
-    import android_harness.helpers as _helpers
-
-    if not args or args[0] in {"-h", "--help"}:
-        print("mobile-use (Android mode) — run `mobile-use --help` for full usage")
-        return
-    if args[0] == "--doctor":
-        sys.exit(run_doctor())
-    if args[0] == "--reload":
-        restart_daemon()
-        print("Android daemon stopped — will respawn on next call")
-        return
-    if args[0] != "-c" or len(args) < 2:
-        sys.exit('Usage: mobile-use --android -c "print(active_app())"')
-
-    env_err = _check_env_for_platform("android")
-    if env_err:
-        sys.exit(env_err)
-
+    from iphone_harness.admin import ensure_daemon
+    import iphone_harness.helpers as _helpers
     try:
         ensure_daemon()
     except RuntimeError as e:
@@ -150,8 +126,46 @@ def _run_android(args):
     except SyntaxError as e:
         sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
     except Exception:
-        import traceback
-        sys.stderr.write(traceback.format_exc())
+        _write_user_traceback()
+        sys.exit(1)
+
+
+def _run_android(args):
+    """Delegate to android-harness."""
+    if not args or args[0] in {"-h", "--help"}:
+        print("mobile-use (Android mode) — run `mobile-use --help` for full usage")
+        return
+    if args[0] == "--doctor":
+        from android_harness.admin import run_doctor
+        sys.exit(run_doctor())
+    if args[0] == "--reload":
+        from android_harness.admin import restart_daemon
+        restart_daemon()
+        print("Android daemon stopped — will respawn on next call")
+        return
+    if args[0] != "-c" or len(args) < 2:
+        sys.exit('Usage: mobile-use --android -c "print(active_app())"')
+
+    env_err = _check_env_for_platform("android")
+    if env_err:
+        sys.exit(env_err)
+
+    from android_harness.admin import ensure_daemon
+    import android_harness.helpers as _helpers
+    try:
+        ensure_daemon()
+    except RuntimeError as e:
+        sys.exit(f"{e}")
+    ns = {k: v for k, v in vars(_helpers).items() if not k.startswith("_")}
+    ns["__builtins__"] = __builtins__
+    try:
+        exec(args[1], ns)
+    except SystemExit:
+        raise
+    except SyntaxError as e:
+        sys.exit(f"Syntax error in your -c script: {e.msg} (line {e.lineno})")
+    except Exception:
+        _write_user_traceback()
         sys.exit(1)
 
 
