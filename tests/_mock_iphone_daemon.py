@@ -23,6 +23,10 @@ class MockDaemon:
     def __init__(self):
         self.stop = None
         self.fail_appium = os.environ.get("MOCK_FAIL_APPIUM") == "1"
+        self._stream_running = False
+        self._stream_frame_no = 0
+        self._stream_fps = 6.0
+        self._stream_quality = 60
 
     async def handle(self, req):
         meta = req.get("meta")
@@ -66,6 +70,43 @@ class MockDaemon:
             raise RuntimeError("mock: intentional crash for tests")
         if method == "garbage_response":
             return "not-a-dict"
+
+        # Screen stream — synthetic JPEG stub so tests don't need PIL.
+        if method == "screen_stream_start":
+            params = req.get("params") or {}
+            self._stream_fps = float(params.get("fps", 6))
+            self._stream_quality = int(params.get("quality", 60))
+            already = self._stream_running
+            self._stream_running = True
+            return {"result": {
+                "running": True,
+                "started": not already,
+                "updated": already,
+                "fps": self._stream_fps,
+                "quality": self._stream_quality,
+                "max_dim": int(params.get("max_dim", 800)),
+            }}
+        if method == "screen_stream_frame":
+            if not self._stream_running:
+                return {"result": {"ready": False, "frame_no": 0}}
+            self._stream_frame_no += 1
+            import base64
+            jpeg_stub = bytes.fromhex(
+                "ffd8ffe000104a46494600010100000100010000ffdb004300080606070605"
+                "08070707090908"
+            )
+            return {"result": {
+                "ready": True,
+                "frame_no": self._stream_frame_no,
+                "jpeg_b64": base64.b64encode(jpeg_stub).decode("ascii"),
+                "fps": self._stream_fps,
+                "quality": self._stream_quality,
+            }}
+        if method == "screen_stream_stop":
+            was = self._stream_running
+            self._stream_running = False
+            self._stream_frame_no = 0
+            return {"result": {"running": False, "stopped": was}}
 
         return {"error": f"mock: unknown method {method!r}"}
 

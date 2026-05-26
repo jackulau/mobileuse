@@ -248,5 +248,26 @@ def run_agent(platform=None, args=None):
                 session_name = args[i + 1]
                 break
 
+    # --headed: spin up MJPEG viewer + open browser. Stays up for whole REPL.
+    viewer = None
+    if os.environ.get("MOBILE_USE_HEADED") == "1":
+        try:
+            from .viewer.server import ViewerServer
+            viewer = ViewerServer(platform=platform)
+            viewer.start()
+            print(f"[mobile-use] live viewer at {viewer.url}", file=sys.stderr)
+            try:
+                import webbrowser
+                webbrowser.open(viewer.url)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[mobile-use] viewer failed to start: {e} (continuing)",
+                  file=sys.stderr)
+
     agent = AgentLoop(platform=platform, session_name=session_name)
-    agent.run_interactive()
+    try:
+        agent.run_interactive()
+    finally:
+        if viewer is not None:
+            viewer.stop()

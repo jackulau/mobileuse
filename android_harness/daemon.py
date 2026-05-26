@@ -92,6 +92,13 @@ class Daemon:
         self.driver = None
         self.stop = None
         self._loop = None
+        # Screen-stream state — populated by screen_stream_start RPC.
+        self._stream_task = None
+        self._stream_frame = None
+        self._stream_frame_no = 0
+        self._stream_fps = 6.0
+        self._stream_quality = 60
+        self._stream_max_dim = 800
 
     async def _drive(self, fn):
         return await self._loop.run_in_executor(None, fn)
@@ -175,6 +182,79 @@ async def _m_screenshot(d, params):
     with open(path, "wb") as f:
         f.write(png)
     return {"path": path, "bytes": len(png)}
+
+
+# ---- live screen stream (powers --headed viewer) --------------------------
+
+async def _stream_loop(d):
+    """Capture frames at d._stream_fps; JPEG-encode; store latest."""
+    import io
+    try:
+        from PIL import Image
+    except ImportError:
+        log("stream: Pillow not installed — install via `pip install pillow`")
+        return
+    while True:
+        period = 1.0 / max(0.1, d._stream_fps)
+        try:
+            png = await d._drive(d.driver.get_screenshot_as_png)
+            img = Image.open(io.BytesIO(png))
+            if d._stream_max_dim and max(img.size) > d._stream_max_dim:
+                img.thumbnail((d._stream_max_dim, d._stream_max_dim))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=d._stream_quality)
+            d._stream_frame = buf.getvalue()
+            d._stream_frame_no += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log(f"stream: capture failed: {e}")
+        await asyncio.sleep(period)
+
+
+async def _m_screen_stream_start(d, params):
+    """Start (or reconfigure) capture. params: {fps, quality, max_dim}."""
+    fps = float(params.get("fps", 6))
+    quality = max(1, min(95, int(params.get("quality", 60))))
+    max_dim = int(params.get("max_dim", 800))
+    d._stream_fps = fps
+    d._stream_quality = quality
+    d._stream_max_dim = max_dim
+    if d._stream_task is not None and not d._stream_task.done():
+        return {"running": True, "updated": True, "fps": fps,
+                "quality": quality, "max_dim": max_dim}
+    d._stream_frame_no = 0
+    d._stream_task = asyncio.create_task(_stream_loop(d))
+    return {"running": True, "started": True, "fps": fps,
+            "quality": quality, "max_dim": max_dim}
+
+
+async def _m_screen_stream_frame(d, params):
+    """Return latest captured frame as base64 JPEG. Single-consumer pull model."""
+    import base64
+    if d._stream_frame is None:
+        return {"ready": False, "frame_no": 0}
+    return {
+        "ready": True,
+        "frame_no": d._stream_frame_no,
+        "jpeg_b64": base64.b64encode(d._stream_frame).decode("ascii"),
+        "fps": d._stream_fps,
+        "quality": d._stream_quality,
+    }
+
+
+async def _m_screen_stream_stop(d, params):
+    """Cancel capture loop and clear buffered frame. Idempotent."""
+    if d._stream_task is None:
+        return {"running": False}
+    d._stream_task.cancel()
+    try:
+        await d._stream_task
+    except (asyncio.CancelledError, Exception):
+        pass
+    d._stream_task = None
+    d._stream_frame = None
+    return {"running": False, "stopped": True}
 
 
 async def _m_page_source(d, params):
@@ -280,6 +360,10 @@ _DISPATCH = {
     "send_keys":      _m_send_keys,
     "set_value":      _m_set_value,
     "active_app":     _m_active_app,
+    # Live screen mirror — powers `mobile-use --headed`.
+    "screen_stream_start":  _m_screen_stream_start,
+    "screen_stream_frame":  _m_screen_stream_frame,
+    "screen_stream_stop":   _m_screen_stream_stop,
 }
 
 
