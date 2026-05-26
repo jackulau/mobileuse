@@ -8,3 +8,5 @@ Single-consumer for v1 (one viewer at a time). Viewer is read-only — it never
 sends input to the device. Use the agent loop / `-c` for that.
 """
 from .server import ViewerServer  # noqa: F401
+from .multi_server import MultiViewerServer  # noqa: F401
+from .named_client import NamedStreamClient  # noqa: F401
