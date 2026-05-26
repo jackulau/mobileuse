@@ -628,3 +628,60 @@ Plan: one Appium per port allocated by `DevicePool`.
   and return the error message so it's keyed by name.
 - **Daemon won't come up for one device** → run the per-platform doctor
   scoped to that name: `IPH_NAME=iphone-A iphone-harness --doctor`.
+
+## D7. Watching multiple screens at once
+
+Single live grid for every connected device — no per-device tabs, no
+manual port juggling.
+
+```bash
+mobile-use devices view                          # browser opens to grid
+mobile-use devices view --no-browser             # print URL only
+mobile-use devices view --port 8765              # specific hub port
+mobile-use devices view --fps 6                  # higher per-device fps
+mobile-use devices view --devices iphone-A,pixel-1   # cherry-pick a subset
+mobile-use devices view --mock                   # stubbed backend (CI / sanity)
+```
+
+How it works:
+
+- ONE HTTP server on ONE auto-allocated port (the "hub").
+- Routes per device: `/stream/<name>` (MJPEG), `/still/<name>` (single JPEG).
+- Combined index page at `/` shows an N-tile grid (CSS grid, responsive).
+- `/healthz` returns per-device `{running, frame_no, fps, name, platform}`.
+- Each tile pulls its own MJPEG stream — independent backpressure, one
+  unresponsive daemon doesn't freeze the others.
+
+Tile status reads `stream stopped` when a device's daemon is dead or its
+capture loop hasn't started. The other tiles keep streaming.
+
+Defaults to **4 fps per device** (vs 6 fps for single-device `--headed`)
+so a 4-device grid keeps the per-device load reasonable. Bump with
+`--fps` if your machine has headroom.
+
+**Browser connection limits.** Chrome / Safari cap ~6 concurrent
+connections per origin. With 5+ devices, open the URL in two tabs (each
+tab loads a subset) or run `view --devices <subset>` twice on different
+ports. Native MJPEG is one TCP connection per tile.
+
+**Security model.** Loopback bind by default (`127.0.0.1`). No auth on
+the hub or per-stream endpoints — the threat model assumes the host is
+your dev box. If you need to view from another machine, SSH-tunnel:
+`ssh -L 8765:127.0.0.1:8765 <host>` and hit `http://127.0.0.1:8765/`
+locally.
+
+**Multi-device viewer troubleshooting.**
+- **All tiles show `stream stopped`** → daemons aren't running. Run
+  `mobile-use devices status` to confirm; `mobile-use devices reload --all`
+  to restart them.
+- **Tile is black but status says "X.X fps · #N"** → frames are flowing
+  but the daemon's capture is returning blank screens. Wake the device
+  and unlock the screen.
+- **One tile lags far behind the others** → MJPEG buffering on a slow
+  device. Refresh just that tile's URL (`/stream/<name>`) in a new tab.
+- **`viewer init failed: at least one device required`** → discovery
+  returned empty. `mobile-use devices list` shows what (if anything) is
+  connected.
+- **Want input control too?** The viewer is read-only by design. Drive
+  input from a separate process via the Python API (e.g.
+  `DevicePool.from_connected().broadcast(lambda d: d.tap_at_xy(...))`).

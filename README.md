@@ -107,6 +107,29 @@ remote Appium server.
 
 End-to-end example: [`docs/demos/multi-device-broadcast.py`](docs/demos/multi-device-broadcast.py).
 
+**Watch every screen at once:**
+
+```bash
+mobile-use devices view             # open all connected devices in a grid (browser)
+mobile-use devices view --port 8765 --no-browser
+mobile-use devices view --devices iphone-A,pixel-1   # cherry-pick
+```
+
+```
+┌─ multi-device live view ────────────────── 3/3 streams live ─┐
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐           │
+│ │ ios/iphone-A │ │ ios/iphone-B │ │ android/px-1 │           │
+│ │  [screen]    │ │  [screen]    │ │  [screen]    │           │
+│ │  4.0fps · #N │ │  4.0fps · #N │ │  4.0fps · #N │           │
+│ └──────────────┘ └──────────────┘ └──────────────┘           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+One HTTP server, one auto-allocated port, N MJPEG streams under `/stream/<name>`.
+Loopback-only, read-only mirror. Single-device view still works via `--headed`.
+
+Example: [`docs/demos/multi-device-viewer.py`](docs/demos/multi-device-viewer.py).
+
 ### Runtime helpers (no device pain)
 
 ```python
