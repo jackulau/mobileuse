@@ -259,6 +259,13 @@ SETUP & MAINTENANCE:
   mobile-use --ios --reload            iOS daemon only
   mobile-use --android --reload        Android daemon only
 
+MACROS:
+  mobile-use macro record <name>       record a tap/swipe sequence (REPL)
+  mobile-use macro replay <name>       literal re-run of recorded steps
+  mobile-use macro replay <name> --smart   LLM-adaptive re-run (handles UI drift)
+  mobile-use macro list                show saved macros
+  mobile-use macro show <name>         print recorded .py script
+
 DATA:
   mobile-use export-training [FILE]    export training data to JSONL
   mobile-use training-stats            show training data summary
