@@ -286,13 +286,18 @@ iOS FROM WINDOWS / LINUX (remote Mac bridge):
   On Windows/Linux:       mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c '...'
   Full walkthrough:       SETUP.md → "iOS from Windows / Linux"
 
-MULTIBOXING (Python API):
-  from mobile_use import DevicePool
-  pool = DevicePool()
-  pool.add_ios("iphone1", udid="...")
-  pool.add_android("pixel", udid="...")
-  pool.ensure_all_ready()
-  pool.broadcast(lambda d: d.screenshot())
+MULTI-DEVICE:
+  mobile-use devices list             Auto-detect connected iOS + Android devices
+                                      (uses idevice_id / adb under the hood).
+  mobile-use devices status           Show running named daemons.
+  mobile-use devices reload <name>    Restart one named daemon.
+  mobile-use devices reload --all     Restart every running named daemon.
+
+  Python API (auto-populated pool from discovery):
+    from mobile_use import DevicePool
+    pool = DevicePool.from_connected()    # no UDIDs to type
+    pool.ensure_all_ready()
+    pool.broadcast(lambda d: d.screenshot())
 
 PLATFORM-SPECIFIC CLIs (also installed):
   iphone-harness -c '...' | --doctor | --reload
@@ -386,6 +391,10 @@ def main():
     if remaining and remaining[0] == "quickstart":
         from . import quickstart
         sys.exit(quickstart.main(remaining[1:], platform=platform))
+
+    if remaining and remaining[0] == "devices":
+        from . import devices as _devices
+        sys.exit(_devices.main(remaining[1:]))
 
     # ios <action> — iOS-specific subcommands.
     if remaining and remaining[0] == "ios":
