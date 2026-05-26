@@ -1,4 +1,5 @@
 """Tests for record_replay — captures helper calls and replays them."""
+import json
 import types
 from pathlib import Path
 
@@ -170,3 +171,232 @@ def test_records_with_android_harness_helpers():
     record_replay.start_recording(path, helpers=anh, fn_names=("tap_at_xy",))
     record_replay.stop_recording()
     Path(path).unlink(missing_ok=True)
+
+
+# ---------- UI fingerprint helper ----------
+
+def _fake_helpers_with_ui(tree, app="com.example.app"):
+    mod = types.ModuleType("fake_with_ui")
+    mod.active_app = lambda: app
+    mod.ui_tree = lambda visible_only=False, compact=False: list(tree)
+    return mod
+
+
+def test_fingerprint_empty_when_helpers_lack_ui():
+    """Helpers without ui_tree/active_app yield empty fingerprint, no exception."""
+    h = _make_fake_helpers()
+    fp = record_replay._ui_fingerprint(h)
+    assert fp == {"app": "", "labels": [], "focused": None, "count": 0}
+
+
+def test_fingerprint_collects_visible_labels_ios_shape():
+    tree = [
+        {"type": "Button", "label": "Send", "name": "sendBtn", "traits": ""},
+        {"type": "Button", "label": "Cancel", "name": "cancelBtn", "traits": ""},
+        {"type": "TextField", "label": "", "name": "composeField", "traits": "Focused"},
+    ]
+    h = _make_fake_helpers()
+    h.active_app = lambda: "com.apple.mobilesms"
+    h.ui_tree = lambda visible_only=False, compact=False: tree
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["app"] == "com.apple.mobilesms"
+    assert fp["labels"] == ["Cancel", "Send", "composeField"]
+    assert fp["focused"] == "composeField"
+    assert fp["count"] == 3
+
+
+def test_fingerprint_collects_text_android_shape():
+    tree = [
+        {"type": "Button", "text": "Reply", "content_desc": "", "focused": False},
+        {"type": "EditText", "text": "", "content_desc": "Message box", "focused": True},
+    ]
+    h = _make_fake_helpers()
+    h.active_app = lambda: "com.android.messaging"
+    h.ui_tree = lambda visible_only=False, compact=False: tree
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["app"] == "com.android.messaging"
+    assert "Reply" in fp["labels"]
+    assert "Message box" in fp["labels"]
+    assert fp["focused"] == "Message box"
+
+
+def test_fingerprint_caps_labels_at_top_n():
+    tree = [{"type": "X", "label": f"item-{i:03d}"} for i in range(50)]
+    h = _make_fake_helpers()
+    h.ui_tree = lambda visible_only=False, compact=False: tree
+    fp = record_replay._ui_fingerprint(h)
+    assert len(fp["labels"]) == record_replay._FP_TOP_N
+    # Sorted-stable cap: top of sorted set
+    assert fp["labels"] == sorted([f"item-{i:03d}" for i in range(50)])[: record_replay._FP_TOP_N]
+
+
+def test_fingerprint_dedupes_repeated_labels():
+    tree = [
+        {"type": "Cell", "label": "Row"},
+        {"type": "Cell", "label": "Row"},
+        {"type": "Cell", "label": "Row"},
+        {"type": "Cell", "label": "Other"},
+    ]
+    h = _make_fake_helpers()
+    h.ui_tree = lambda visible_only=False, compact=False: tree
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["labels"] == ["Other", "Row"]
+    assert fp["count"] == 4  # count counts all visible, not unique
+
+
+def test_fingerprint_swallows_active_app_errors():
+    h = _make_fake_helpers()
+    def boom():
+        raise RuntimeError("WDA disconnected")
+    h.active_app = boom
+    h.ui_tree = lambda visible_only=False, compact=False: []
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["app"] == ""  # gracefully empty
+
+
+def test_fingerprint_swallows_ui_tree_errors():
+    h = _make_fake_helpers()
+    h.active_app = lambda: "x"
+    def boom(visible_only=False, compact=False):
+        raise RuntimeError("appium gone")
+    h.ui_tree = boom
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["labels"] == []
+    assert fp["count"] == 0
+    assert fp["app"] == "x"
+
+
+def test_fingerprint_handles_ui_tree_without_kwargs():
+    """Some mock helpers may not accept visible_only=. Fall back to no-arg call."""
+    h = _make_fake_helpers()
+    h.ui_tree = lambda: [{"type": "X", "label": "Hello"}]
+    fp = record_replay._ui_fingerprint(h)
+    assert fp["labels"] == ["Hello"]
+
+
+def test_fingerprint_size_is_small():
+    """Realistic-size fingerprint should serialize to ≤ 1KB JSON (target ~200 bytes)."""
+    import json
+    tree = [{"type": "Button", "label": f"Btn {i}"} for i in range(record_replay._FP_TOP_N)]
+    h = _make_fake_helpers()
+    h.active_app = lambda: "com.test.app"
+    h.ui_tree = lambda visible_only=False, compact=False: tree
+    fp = record_replay._ui_fingerprint(h)
+    serialized = json.dumps(fp)
+    assert len(serialized) < 1024, f"fingerprint too large: {len(serialized)} bytes"
+
+
+# ---------- annotate / intent ----------
+
+def test_annotate_exists():
+    assert hasattr(record_replay, "annotate")
+
+
+def test_annotate_rejects_empty_intent():
+    with pytest.raises(ValueError):
+        record_replay.annotate("")
+    with pytest.raises(ValueError):
+        record_replay.annotate("   ")
+    with pytest.raises(ValueError):
+        record_replay.annotate(None)  # type: ignore
+
+
+def test_annotate_outside_recording_is_noop():
+    """annotate() block outside start_recording does not raise and does not journal."""
+    with record_replay.annotate("noop intent"):
+        pass  # no recording active → just sets/restores thread state
+
+
+def test_annotate_tags_recorded_calls(tmp_path):
+    """Calls inside annotate block carry intent in the journal."""
+    h = _make_fake_helpers()
+    h.active_app = lambda: "com.test.app"
+    h.ui_tree = lambda visible_only=False, compact=False: [
+        {"type": "Btn", "label": "Compose"},
+    ]
+    out = tmp_path / "rec.py"
+    record_replay.start_recording(str(out), helpers=h)
+    try:
+        with record_replay.annotate("open compose"):
+            h.tap_at_xy(10, 20)
+            h.type_text("hi")
+        # Outside the block → no intent tagged
+        h.tap_at_xy(30, 40)
+    finally:
+        record_replay.stop_recording()
+
+    sidecar = out.with_suffix(".py.jsonl")
+    assert sidecar.exists(), "sidecar .jsonl should be written when any entry has intent"
+    lines = [json.loads(l) for l in sidecar.read_text().splitlines() if l.strip()]
+    assert len(lines) == 3
+    assert lines[0]["intent"] == "open compose"
+    assert lines[1]["intent"] == "open compose"
+    assert "intent" not in lines[2]
+    # Fingerprint captured at annotate __enter__
+    assert "fingerprint" in lines[0]
+    assert lines[0]["fingerprint"]["app"] == "com.test.app"
+    assert "Compose" in lines[0]["fingerprint"]["labels"]
+
+
+def test_annotate_no_sidecar_when_no_intents(tmp_path):
+    """No annotate used → no .jsonl sidecar written (backward compat)."""
+    h = _make_fake_helpers()
+    out = tmp_path / "rec.py"
+    record_replay.start_recording(str(out), helpers=h)
+    h.tap_at_xy(1, 2)
+    record_replay.stop_recording()
+    assert not out.with_suffix(".py.jsonl").exists()
+
+
+def test_annotate_restores_prev_intent_on_exit(tmp_path):
+    """After annotate block exits, recording state returns to prior intent."""
+    h = _make_fake_helpers()
+    out = tmp_path / "rec.py"
+    record_replay.start_recording(str(out), helpers=h)
+    try:
+        assert record_replay._state["current_intent"] is None
+        with record_replay.annotate("outer"):
+            assert record_replay._state["current_intent"] == "outer"
+            with record_replay.annotate("inner"):
+                assert record_replay._state["current_intent"] == "inner"
+            assert record_replay._state["current_intent"] == "outer"
+        assert record_replay._state["current_intent"] is None
+    finally:
+        record_replay.stop_recording()
+
+
+def test_annotate_clears_state_on_exception(tmp_path):
+    """If body raises inside annotate, state still restored."""
+    h = _make_fake_helpers()
+    out = tmp_path / "rec.py"
+    record_replay.start_recording(str(out), helpers=h)
+    try:
+        with pytest.raises(RuntimeError):
+            with record_replay.annotate("crashy"):
+                raise RuntimeError("boom")
+        assert record_replay._state["current_intent"] is None
+    finally:
+        record_replay.stop_recording()
+
+
+def test_annotate_fingerprint_captured_at_entry(tmp_path):
+    """Fingerprint is snapshotted once at __enter__, not re-fetched per call."""
+    h = _make_fake_helpers()
+    tree_state = [[{"type": "B", "label": "First"}]]  # mutable, so we can mutate between calls
+    h.active_app = lambda: "app"
+    h.ui_tree = lambda visible_only=False, compact=False: tree_state[0]
+    out = tmp_path / "rec.py"
+    record_replay.start_recording(str(out), helpers=h)
+    try:
+        with record_replay.annotate("step"):
+            h.tap_at_xy(1, 2)
+            # Change UI mid-block — the journal entries should still all reference
+            # the fingerprint captured at __enter__.
+            tree_state[0] = [{"type": "B", "label": "AfterChange"}]
+            h.tap_at_xy(3, 4)
+    finally:
+        record_replay.stop_recording()
+
+    lines = [json.loads(l) for l in out.with_suffix(".py.jsonl").read_text().splitlines() if l.strip()]
+    assert lines[0]["fingerprint"]["labels"] == ["First"]
+    assert lines[1]["fingerprint"]["labels"] == ["First"]  # not "AfterChange"

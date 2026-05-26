@@ -365,6 +365,11 @@ def main():
             sys.exit(ios_wda.build_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use ios` action: {remaining[1]!r}. Try `mobile-use ios --help`.")
 
+    # macro <subcmd> — record/replay action sequences (literal + smart)
+    if remaining and remaining[0] == "macro":
+        from . import macro
+        sys.exit(macro.main(remaining[1:], platform=platform))
+
     # Training data commands
     if remaining and remaining[0] == "export-training":
         from .collector import export_training_data

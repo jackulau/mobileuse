@@ -113,6 +113,36 @@ If you struggle with a generic mechanic, look in the skills directories:
 - **Permission dialogs:** block the app. Use `grant_permission()` or `alert_accept()`.
 - **Screen locked:** `unlock()` first. PIN/pattern → surface to user.
 
+## Macros — record once, replay many
+
+Use macros for repetitive flows the agent runs verbatim (smoke tests, demos,
+deterministic setup). Two tiers:
+
+- **Literal** — `record_replay.replay("flow.py", helpers=h)` re-executes the exact
+  recorded calls. Fastest, cheapest, brittle to any UI change.
+- **Smart** — `record_replay.replay_smart("flow.py", helpers=h, llm=client)` checks
+  the UI fingerprint before each annotated block; if it diverged from record
+  time, asks the LLM to re-target the action. Costs one LLM call per shifted
+  step (zero when UI is unchanged).
+
+Record with intent so smart replay knows what each segment was for:
+
+```python
+with record_replay.recording("compose.py", helpers=h):
+    with record_replay.annotate("open compose screen"):
+        h.tap(h.find(label="Compose"))
+    with record_replay.annotate("send message body"):
+        h.type_text("hi")
+        h.tap(h.find(label="Send"))
+```
+
+CLI: `mobile-use macro record <name>` opens a REPL with helpers + recording
+active; `mobile-use macro replay <name> --smart` runs intent-aware replay.
+
+**When to prefer macros over the agent loop:** flow is known, deterministic, and
+will be re-run many times. **Stick with the agent loop** when you're exploring,
+the screen state is unpredictable, or you need branching logic per response.
+
 ## Domain skills (opt-in)
 
 When enabled (`IPH_DOMAIN_SKILLS=1` or `ANH_DOMAIN_SKILLS=1`), call `domain_skills(id)` after launching:

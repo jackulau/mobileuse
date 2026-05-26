@@ -91,14 +91,25 @@ def run_script():
 
 record_screen(duration=10)                  # save mp4 to /tmp (XCUITest + UIAutomator2)
 
-# record/replay a tap sequence:
+# record/replay a tap sequence (dumb — literal replay):
 from mobile_use import record_replay
 import iphone_harness.helpers as h
 record_replay.start_recording("flow.py", helpers=h)
 # ... your taps/swipes/typing ...
 record_replay.stop_recording()              # writes runnable flow.py
 record_replay.replay("flow.py")             # play it back
+
+# smart macro — annotate intent + LLM re-targets when the UI shifts:
+with record_replay.recording("compose.py", helpers=h):
+    with record_replay.annotate("open compose screen"):
+        h.tap(h.find(label="Compose"))
+    with record_replay.annotate("type message body"):
+        h.type_text("hello")
+# replay_smart re-finds buttons via your LLM when labels / layout move
+record_replay.replay_smart("compose.py", helpers=h, llm=my_llm_callable)
 ```
+
+CLI equivalent — `mobile-use macro record <name>` opens a REPL with helpers + recording active; `mobile-use macro replay <name> --smart` adapts steps when the UI shifts. See [docs/macros.md](docs/macros.md) for the full walkthrough.
 
 ### Manual setup (skip if `mobile-use bootstrap` worked)
 
