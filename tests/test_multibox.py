@@ -169,3 +169,89 @@ def test_distinct_names_get_distinct_ports():
     pa = int(a._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
     pb = int(b._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
     assert pa != pb
+
+
+# ---- D5: parallel ensure_all_ready + broadcast + status ---------------
+
+class _MockAdmin:
+    """Stand-in for iphone_harness.admin / android_harness.admin."""
+    def __init__(self):
+        self.ensure_calls = []
+        self.alive_for = set()
+
+    def ensure_daemon(self, name=None, env=None):
+        self.ensure_calls.append(name)
+        self.alive_for.add(name)
+
+    def daemon_alive(self, name=None):
+        return name in self.alive_for
+
+
+def _stub_device(name, platform, admin=None, helpers=None):
+    """Build a Device whose _load() is a no-op and uses our mock admin."""
+    d = Device(name, platform)
+    d._admin = admin or _MockAdmin()
+    d._helpers = helpers or type("H", (), {})()
+    d._load = lambda: None
+    return d
+
+
+def test_ensure_all_ready_parallel_fires_all():
+    pool = DevicePool()
+    admins = {}
+    for n in ("a", "b", "c"):
+        dev = _stub_device(n, "ios")
+        admins[n] = dev._admin
+        pool._devices[n] = dev
+
+    results = pool.ensure_all_ready(max_workers=3)
+    assert results == {"a": "ready", "b": "ready", "c": "ready"}
+    for n, a in admins.items():
+        assert n in a.ensure_calls
+
+
+def test_broadcast_collects_errors_and_results():
+    pool = DevicePool()
+    pool._devices["good"] = _stub_device("good", "ios")
+    pool._devices["bad"] = _stub_device("bad", "android")
+
+    def fn(d):
+        if d.name == "bad":
+            raise RuntimeError("simulated failure")
+        return f"ok-{d.name}"
+
+    out = pool.broadcast(fn, max_workers=2)
+    assert out["good"] == {"result": "ok-good"}
+    assert "error" in out["bad"]
+    assert "simulated failure" in out["bad"]["error"]
+
+
+def test_status_with_mock_admin_reports_alive():
+    pool = DevicePool()
+    admin = _MockAdmin()
+    admin.alive_for.add("alive-one")
+    pool._devices["alive-one"] = _stub_device("alive-one", "ios", admin=admin)
+    pool._devices["dead-one"] = _stub_device("dead-one", "android", admin=admin)
+
+    s = pool.status()
+    assert s["alive-one"]["daemon"] == "alive"
+    assert s["dead-one"]["daemon"] == "not running"
+
+
+def test_one_slow_device_does_not_block_others():
+    import time
+
+    pool = DevicePool()
+    for n in ("fast1", "slow", "fast2"):
+        pool._devices[n] = _stub_device(n, "ios")
+
+    def fn(d):
+        if d.name == "slow":
+            time.sleep(0.3)
+        return d.name
+
+    start = time.time()
+    out = pool.broadcast(fn, max_workers=3)
+    elapsed = time.time() - start
+    assert set(out.keys()) == {"fast1", "slow", "fast2"}
+    assert elapsed < 0.6
