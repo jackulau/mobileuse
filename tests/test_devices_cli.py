@@ -194,3 +194,79 @@ def test_cli_top_level_help_mentions_devices():
     )
     assert r.returncode == 0
     assert "devices" in r.stdout.lower()
+
+
+# ---- D3: `devices view` subcommand ---------------------------------------
+
+def test_cli_devices_help_lists_view():
+    r = _run_cli("--help")
+    assert r.returncode == 0
+    assert "view" in r.stdout.lower()
+
+
+def test_cli_devices_view_help_mentions_grid():
+    r = _run_cli("view", "--help")
+    assert r.returncode == 0
+    out = r.stdout.lower()
+    assert ("multi" in out and "view" in out) or "mjpeg" in out
+
+
+def test_cli_devices_view_rejects_unknown_flag():
+    r = _run_cli("view", "--nope")
+    assert r.returncode == 2
+    assert "unknown flag" in r.stderr.lower()
+
+
+def test_cli_devices_view_bad_port():
+    r = _run_cli("view", "--port", "abc")
+    assert r.returncode == 2
+    assert "port" in r.stderr.lower()
+
+
+def test_cli_devices_view_no_devices_connected(monkeypatch):
+    from mobile_use import devices as dev
+    monkeypatch.setattr(dev, "discover_connected", lambda: [])
+    rc = dev._cmd_view(["--no-browser"])
+    assert rc == 1
+
+
+def test_cli_devices_view_filter_unknown_name(monkeypatch):
+    from mobile_use import devices as dev
+    monkeypatch.setattr(dev, "discover_connected",
+                        lambda: [{"platform": "ios", "udid": "A", "name": "iphone-A"}])
+    rc = dev._cmd_view(["--no-browser", "--devices", "iphone-B"])
+    assert rc == 1
+
+
+def test_cli_devices_view_parse_args():
+    from mobile_use import devices as dev
+    opts = dev._parse_view_args(["--no-browser", "--port", "12345", "--fps", "3",
+                                 "--devices", "a,b"])
+    assert opts["no_browser"] is True
+    assert opts["port"] == 12345
+    assert opts["fps"] == 3
+    assert opts["devices"] == ["a", "b"]
+    assert opts["mock"] is False
+    assert opts["help"] is False
+
+
+def test_cli_devices_view_mock_starts_server():
+    """Smoke test the --mock path end-to-end via direct function call,
+    then tear the viewer down without going through SIGINT."""
+    import urllib.request, json
+    from mobile_use import devices as dev
+    from mobile_use.viewer.multi_server import MultiViewerServer
+
+    pairs = dev._make_mock_view_pairs()
+    factory = dev._mock_client_factory()
+    viewer = MultiViewerServer(pairs, fps=2, client_factory=factory)
+    viewer.start()
+    try:
+        with urllib.request.urlopen(viewer.url + "healthz", timeout=2) as r:
+            data = json.loads(r.read())
+        names = {d["name"] for d in data["devices"]}
+        assert names == {p[1] for p in pairs}
+        for d in data["devices"]:
+            assert d["running"] is True
+    finally:
+        viewer.stop()

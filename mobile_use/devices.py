@@ -200,6 +200,7 @@ USAGE:
   mobile-use devices status --json  Same, JSON output.
   mobile-use devices reload <name>  cleanup_stale + restart_daemon for one name.
   mobile-use devices reload --all   Reload every running named daemon.
+  mobile-use devices view           Live MJPEG grid of every connected device.
 
 DISCOVERY:
   iOS uses `idevice_id -l` (libimobiledevice).
@@ -211,6 +212,23 @@ TIPS:
     from the same discovery output.
   - On Windows, iOS discovery returns empty — use a remote Mac daemon via
     `--remote-daemon` (see SETUP.md).
+"""
+
+
+VIEW_HELP = """\
+mobile-use devices view — live multi-device MJPEG viewer.
+
+USAGE:
+  mobile-use devices view                       Open every connected device in a browser grid.
+  mobile-use devices view --no-browser          Print URL but don't auto-open.
+  mobile-use devices view --port 8765           Use a specific port (default: auto).
+  mobile-use devices view --fps 4               Per-device frame rate (default 4 for multi).
+  mobile-use devices view --devices A,B         Cherry-pick a subset by NAME (from `devices list`).
+  mobile-use devices view --mock                Stub backend for CI / smoke tests.
+
+The viewer hosts one MJPEG stream per device under /stream/<name> and a
+combined grid index at /. Loopback-only (no auth). Read-only mirror — use
+the agent loop / `-c` for input.
 """
 
 
@@ -304,6 +322,156 @@ def _cmd_reload(args):
     return rc
 
 
+def _parse_view_args(args):
+    """Tiny argparser for `devices view` — avoids dragging argparse into the
+    other subcommands (which use position-only conventions)."""
+    parsed = {
+        "no_browser": False, "port": None, "fps": 4,
+        "devices": None, "mock": False, "help": False,
+    }
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in {"-h", "--help"}:
+            parsed["help"] = True
+        elif a == "--no-browser":
+            parsed["no_browser"] = True
+        elif a == "--mock":
+            parsed["mock"] = True
+        elif a == "--port" and i + 1 < len(args):
+            try:
+                parsed["port"] = int(args[i + 1])
+            except ValueError:
+                raise ValueError(f"--port expects an integer, got {args[i+1]!r}")
+            i += 1
+        elif a == "--fps" and i + 1 < len(args):
+            try:
+                parsed["fps"] = int(args[i + 1])
+            except ValueError:
+                raise ValueError(f"--fps expects an integer, got {args[i+1]!r}")
+            i += 1
+        elif a == "--devices" and i + 1 < len(args):
+            parsed["devices"] = [s.strip() for s in args[i + 1].split(",") if s.strip()]
+            i += 1
+        else:
+            raise ValueError(f"unknown flag {a!r}")
+        i += 1
+    return parsed
+
+
+def _make_mock_view_pairs():
+    return [("ios", "iphone-mock-A"), ("ios", "iphone-mock-B"), ("android", "pixel-mock-1")]
+
+
+def _mock_client_factory():
+    """Build a no-network NamedStreamClient-shaped stub for --mock view."""
+    import base64 as _b64
+    tiny_jpeg_b64 = (
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
+        "AQEBAQEBAQEBAQEBAQEBAQEBAQEB/8QAFgABAQEAAAAAAAAAAAAAAAAAAAcI/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/a"
+        "AAgBAQABPxA//9k="
+    )
+
+    class _MockClient:
+        def __init__(self, platform, name, fps, quality, max_dim):
+            self.platform, self.name, self.fps = platform, name, fps
+            self._n = 0
+
+        def start(self):
+            return {"running": True}
+
+        def frame(self):
+            self._n += 1
+            return {"ready": True, "frame_no": self._n,
+                    "jpeg_b64": tiny_jpeg_b64, "fps": float(self.fps)}
+
+        def frame_jpeg(self):
+            return _b64.b64decode(tiny_jpeg_b64)
+
+        def stop(self):
+            return {"running": False}
+
+    return lambda p, n, f, q, m: _MockClient(p, n, f, q, m)
+
+
+def _cmd_view(args):
+    try:
+        opts = _parse_view_args(args)
+    except ValueError as e:
+        print(f"{e}\n\n{VIEW_HELP}", file=sys.stderr)
+        return 2
+
+    if opts["help"]:
+        print(VIEW_HELP)
+        return 0
+
+    from .viewer.multi_server import MultiViewerServer
+
+    if opts["mock"]:
+        pairs = _make_mock_view_pairs()
+        factory = _mock_client_factory()
+    else:
+        connected = discover_connected()
+        if not connected:
+            print("No devices connected.", file=sys.stderr)
+            for h in discovery_hints():
+                print(f"  hint: {h}", file=sys.stderr)
+            return 1
+        if opts["devices"]:
+            allowed = set(opts["devices"])
+            connected = [d for d in connected if d["name"] in allowed]
+            missing = allowed - {d["name"] for d in connected}
+            if missing:
+                print(f"unknown device(s): {sorted(missing)}", file=sys.stderr)
+                print("  see `mobile-use devices list`", file=sys.stderr)
+                return 1
+        pairs = [(d["platform"], d["name"]) for d in connected]
+        factory = None
+
+        for platform, name in pairs:
+            try:
+                if platform == "ios":
+                    from iphone_harness import admin as adm
+                else:
+                    from android_harness import admin as adm
+                adm.ensure_daemon(name=name)
+            except Exception as e:
+                print(f"warning: daemon for {platform}/{name} not reachable: {e}",
+                      file=sys.stderr)
+
+    try:
+        viewer = MultiViewerServer(
+            pairs, port=opts["port"], fps=opts["fps"],
+            client_factory=factory,
+        )
+    except ValueError as e:
+        print(f"viewer init failed: {e}", file=sys.stderr)
+        return 1
+
+    viewer.start()
+    print(f"multi-device viewer — {viewer.url}")
+    print(f"  streaming {len(pairs)} device(s): "
+          f"{', '.join(f'{p}/{n}' for p, n in pairs)}")
+    print("  Ctrl+C to stop.")
+
+    if not opts["no_browser"]:
+        try:
+            import webbrowser
+            webbrowser.open(viewer.url)
+        except Exception:
+            pass
+
+    try:
+        import time as _time
+        while True:
+            _time.sleep(3600)
+    except KeyboardInterrupt:
+        print("\nstopping…")
+    finally:
+        viewer.stop()
+    return 0
+
+
 def main(args):
     if not args or args[0] in {"-h", "--help"}:
         print(HELP)
@@ -315,5 +483,7 @@ def main(args):
         return _cmd_status(sub_args)
     if sub == "reload":
         return _cmd_reload(sub_args)
+    if sub == "view":
+        return _cmd_view(sub_args)
     print(f"unknown subcommand {sub!r}\n\n{HELP}", file=sys.stderr)
     return 2

@@ -299,6 +299,7 @@ MULTI-DEVICE:
   mobile-use devices status           Show running named daemons.
   mobile-use devices reload <name>    Restart one named daemon.
   mobile-use devices reload --all     Restart every running named daemon.
+  mobile-use devices view             Live MJPEG grid of every connected device.
 
   Python API (auto-populated pool from discovery):
     from mobile_use import DevicePool
