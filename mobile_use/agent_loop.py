@@ -12,6 +12,7 @@ interact with a mobile device. It handles:
   - Auto skill authoring (writes .md files for discoveries)
   - Action history with rollback support
 """
+import json
 import os
 import sys
 import time
@@ -228,6 +229,123 @@ class AgentLoop:
         import code
         code.interact(local=ns, banner="", exitmsg="Session saved.")
         self.session.save()
+
+
+_RETARGET_PROMPT = """You are a UI re-targeting assistant for replaying a recorded mobile-app action.
+
+Recorded intent: {intent!r}
+At record time, the UI looked like:
+  app: {recorded_app}
+  visible labels (top {n_recorded}): {recorded_labels}
+  focused element: {recorded_focused}
+
+Originally invoked: {recorded_call}
+
+The UI is now different:
+  app: {current_app}
+  visible labels (top {n_current}): {current_labels}
+  focused element: {current_focused}
+
+Full current UI tree (compact, top 30):
+{current_ui_json}
+
+Pick the SINGLE best adapted action that fulfills the intent on the current UI.
+Reply with strict JSON, one of:
+  {{"fn": "<helper-fn>", "args": [...], "kwargs": {{...}}}}
+  {{"skip": true, "reason": "<short reason>"}}
+
+Rules:
+- Prefer label/text-based selectors over xy coordinates when possible.
+- Reuse the recorded helper-function name when the same op type still applies.
+- Do NOT invent helper functions; stick to names that plausibly exist on the helpers module.
+- Return ONLY the JSON object. No markdown, no commentary.
+"""
+
+
+def retarget_action(intent, recorded_fp, current_ui, recorded_call, llm,
+                    current_app=None, current_focused=None):
+    """Ask an LLM to adapt a recorded action when the UI fingerprint has shifted.
+
+    Args:
+        intent:         human label for the recorded segment (from annotate()).
+        recorded_fp:    fingerprint dict captured at record time
+                        ({"app","labels","focused","count"}).
+        current_ui:     list of element dicts from helpers.ui_tree(visible_only=True).
+        recorded_call:  dict {fn, args, kwargs} of the literal recorded action.
+        llm:            callable(prompt: str) -> str returning strict JSON.
+                        Wrap your Anthropic / OpenAI / etc. client to fit.
+        current_app:    optional current app bundle id; omitted from prompt if None.
+        current_focused: optional currently-focused element label.
+
+    Returns:
+        dict with same shape as recorded_call (adapted), or
+        None if the LLM signals skip / returns unparseable output / raises.
+    """
+    if not callable(llm):
+        raise TypeError("retarget_action: llm must be callable(prompt) -> str")
+
+    rfp = recorded_fp or {}
+    current_labels = []
+    seen = set()
+    for el in (current_ui or []):
+        if not isinstance(el, dict):
+            continue
+        lbl = (el.get("label") or el.get("name")
+               or el.get("text") or el.get("content_desc") or "")
+        if lbl and lbl not in seen:
+            seen.add(lbl)
+            current_labels.append(lbl)
+    current_labels = sorted(current_labels)[:20]
+
+    try:
+        ui_json = json.dumps((current_ui or [])[:30], default=str)
+    except (TypeError, ValueError):
+        ui_json = "[]"
+
+    prompt = _RETARGET_PROMPT.format(
+        intent=intent,
+        recorded_app=rfp.get("app", ""),
+        n_recorded=len(rfp.get("labels", []) or []),
+        recorded_labels=rfp.get("labels", []),
+        recorded_focused=rfp.get("focused"),
+        recorded_call=json.dumps(recorded_call, default=str),
+        current_app=current_app or "",
+        n_current=len(current_labels),
+        current_labels=current_labels,
+        current_focused=current_focused,
+        current_ui_json=ui_json,
+    )
+
+    try:
+        raw = llm(prompt)
+    except Exception:
+        return None
+    if not isinstance(raw, str):
+        return None
+
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("skip") is True:
+        return None
+    if not isinstance(parsed.get("fn"), str):
+        return None
+
+    return {
+        "fn": parsed["fn"],
+        "args": list(parsed.get("args") or []),
+        "kwargs": dict(parsed.get("kwargs") or {}),
+    }
 
 
 def run_agent(platform=None, args=None):
