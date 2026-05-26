@@ -22,8 +22,44 @@ Usage:
     # Parallel execution
     pool.broadcast(lambda d: d.screenshot())
 """
+import hashlib
 import os
+import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+_APPIUM_PORT_RANGE = (4724, 4799)
+
+
+def _port_is_free(port, host="127.0.0.1"):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def _allocate_appium_port(name, host="127.0.0.1"):
+    """Deterministic per-name port in 4724-4799 (skipping default 4723).
+
+    Hashes the name so repeated calls return the same port (idempotent
+    daemon respawn). If the chosen port is bound by something else, walks
+    the range until a free port is found. Raises if the whole range is
+    saturated.
+    """
+    low, high = _APPIUM_PORT_RANGE
+    span = high - low + 1
+    digest = int(hashlib.sha256(name.encode()).hexdigest(), 16)
+    start = low + (digest % span)
+    for offset in range(span):
+        port = low + ((start - low + offset) % span)
+        if _port_is_free(port, host):
+            return port
+    raise RuntimeError(
+        f"no free port in {low}-{high} for daemon {name!r}. "
+        f"Pass appium_url= explicitly or free up some ports."
+    )
 
 
 class Device:
@@ -131,7 +167,12 @@ class DevicePool:
 
     def add_ios(self, name, udid, xcode_org_id=None, wda_bundle_id=None,
                 appium_url=None, platform_version=None):
-        """Add an iOS device to the pool."""
+        """Add an iOS device to the pool.
+
+        If `appium_url` is None, auto-allocate a per-name port in 4724-4799
+        to avoid collisions when multiple named daemons run simultaneously.
+        Pass `appium_url=` explicitly to override (e.g. remote Appium).
+        """
         env = {"IPH_UDID": udid, "IPH_NAME": name}
         if xcode_org_id:
             env["IPH_XCODE_ORG_ID"] = xcode_org_id
@@ -139,6 +180,9 @@ class DevicePool:
             env["IPH_WDA_BUNDLE_ID"] = wda_bundle_id
         if appium_url:
             env["IPH_APPIUM_URL"] = appium_url
+        else:
+            port = _allocate_appium_port(f"ios-{name}")
+            env["IPH_APPIUM_URL"] = f"http://127.0.0.1:{port}"
         if platform_version:
             env["IPH_PLATFORM_VERSION"] = platform_version
 
@@ -147,16 +191,75 @@ class DevicePool:
         return dev
 
     def add_android(self, name, udid, appium_url=None, platform_version=None):
-        """Add an Android device to the pool."""
+        """Add an Android device to the pool.
+
+        If `appium_url` is None, auto-allocate a per-name port in 4724-4799
+        (different range slot than iOS via name prefix) to avoid collisions.
+        """
         env = {"ANH_UDID": udid, "ANH_NAME": name}
         if appium_url:
             env["ANH_APPIUM_URL"] = appium_url
+        else:
+            port = _allocate_appium_port(f"android-{name}")
+            env["ANH_APPIUM_URL"] = f"http://127.0.0.1:{port}"
         if platform_version:
             env["ANH_PLATFORM_VERSION"] = platform_version
 
         dev = Device(name, "android", env)
         self._devices[name] = dev
         return dev
+
+    @classmethod
+    def from_connected(cls, **kwargs):
+        """Build a pool from `mobile_use.devices.discover_connected()`.
+
+        Auto-populates with every iOS + Android device currently connected.
+        Names come from device metadata (e.g. "Pixel-7") with collision
+        indexing. iOS devices need `xcode_org_id` / `wda_bundle_id` for daemon
+        spawn — pass via kwargs (applied to every iOS device) or set the
+        IPH_XCODE_ORG_ID / IPH_WDA_BUNDLE_ID env vars before calling.
+
+        Raises RuntimeError when no devices found, with a hint about which
+        discovery tools are missing.
+        """
+        from . import devices as _discovery
+        discovered = _discovery.discover_connected()
+        if not discovered:
+            hints = _discovery.discovery_hints()
+            hint_lines = "\n  ".join(hints) if hints else "(install adb / libimobiledevice and reconnect)"
+            raise RuntimeError(
+                f"DevicePool.from_connected(): no devices detected.\n  {hint_lines}"
+            )
+
+        ios_kwargs = {k: v for k, v in kwargs.items()
+                      if k in ("xcode_org_id", "wda_bundle_id", "appium_url", "platform_version")}
+        android_kwargs = {k: v for k, v in kwargs.items()
+                          if k in ("appium_url", "platform_version")}
+
+        pool = cls()
+        for entry in discovered:
+            if entry["platform"] == "ios":
+                pool.add_ios(entry["name"], udid=entry["udid"], **ios_kwargs)
+            else:
+                pool.add_android(entry["name"], udid=entry["udid"], **android_kwargs)
+        return pool
+
+    def add_from_udid(self, udid, **kwargs):
+        """Look up a discovered device by UDID and add it to the pool.
+
+        Useful when you want to cherry-pick specific devices instead of
+        adding all connected ones.
+        """
+        from . import devices as _discovery
+        for entry in _discovery.discover_connected():
+            if entry["udid"] == udid:
+                if entry["platform"] == "ios":
+                    return self.add_ios(entry["name"], udid=udid, **kwargs)
+                return self.add_android(entry["name"], udid=udid, **kwargs)
+        raise ValueError(
+            f"udid {udid!r} not found in `mobile-use devices list`. "
+            f"Check it's connected and authorized."
+        )
 
     @property
     def devices(self):

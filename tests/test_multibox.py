@@ -1,4 +1,7 @@
 """Unit tests for mobile_use.multibox — pool management without devices."""
+import pytest
+from unittest.mock import patch
+
 from mobile_use.multibox import Device, DevicePool
 
 
@@ -77,3 +80,92 @@ def test_pool_devices_property():
     devs = pool.devices
     assert isinstance(devs, list)
     assert len(devs) == 2
+
+
+# ---- from_connected / add_from_udid -----------------------------------
+
+def _fake_discovery(*entries):
+    """Patch discover_connected to return canned entries."""
+    from mobile_use import devices
+    return patch.object(devices, "discover_connected", return_value=list(entries))
+
+
+def test_from_connected_builds_pool_from_discovery():
+    entries = [
+        {"platform": "ios", "udid": "AAAA", "name": "iPhone-13"},
+        {"platform": "android", "udid": "S1", "name": "Pixel-7"},
+    ]
+    with _fake_discovery(*entries):
+        pool = DevicePool.from_connected()
+    assert len(pool) == 2
+    assert "iPhone-13" in pool
+    assert "Pixel-7" in pool
+    assert pool["iPhone-13"].platform == "ios"
+    assert pool["Pixel-7"].platform == "android"
+
+
+def test_from_connected_raises_when_empty():
+    with _fake_discovery():
+        with pytest.raises(RuntimeError, match="no devices"):
+            DevicePool.from_connected()
+
+
+def test_from_connected_propagates_ios_kwargs():
+    entries = [{"platform": "ios", "udid": "U1", "name": "iPhone"}]
+    with _fake_discovery(*entries):
+        pool = DevicePool.from_connected(xcode_org_id="TEAM123", wda_bundle_id="com.x.wda")
+    dev = pool["iPhone"]
+    assert dev._env.get("IPH_XCODE_ORG_ID") == "TEAM123"
+    assert dev._env.get("IPH_WDA_BUNDLE_ID") == "com.x.wda"
+
+
+def test_add_from_udid_picks_matching_device():
+    entries = [
+        {"platform": "ios", "udid": "AAAA", "name": "iPhone-13"},
+        {"platform": "android", "udid": "S1", "name": "Pixel-7"},
+    ]
+    pool = DevicePool()
+    with _fake_discovery(*entries):
+        dev = pool.add_from_udid("S1")
+    assert dev.platform == "android"
+    assert dev.name == "Pixel-7"
+    assert len(pool) == 1
+
+
+def test_add_from_udid_unknown_raises():
+    with _fake_discovery():
+        pool = DevicePool()
+        with pytest.raises(ValueError, match="not found"):
+            pool.add_from_udid("NOSUCH")
+
+
+# ---- per-device Appium port allocation (D3) ---------------------------
+
+def test_add_ios_auto_allocates_port_when_no_url():
+    pool = DevicePool()
+    dev = pool.add_ios("phoneA", udid="U1")
+    assert dev._env.get("IPH_APPIUM_URL", "").startswith("http://127.0.0.1:")
+    port = int(dev._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
+    assert 4724 <= port <= 4799
+
+
+def test_add_android_auto_allocates_port_when_no_url():
+    pool = DevicePool()
+    dev = pool.add_android("pixA", udid="S1")
+    port = int(dev._env["ANH_APPIUM_URL"].rsplit(":", 1)[1])
+    assert 4724 <= port <= 4799
+
+
+def test_explicit_appium_url_skips_allocation():
+    pool = DevicePool()
+    dev = pool.add_ios("phoneB", udid="U2", appium_url="http://mac.local:4723")
+    assert dev._env["IPH_APPIUM_URL"] == "http://mac.local:4723"
+
+
+def test_distinct_names_get_distinct_ports():
+    pool = DevicePool()
+    a = pool.add_ios("alpha", udid="U1")
+    b = pool.add_ios("beta", udid="U2")
+    pa = int(a._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
+    pb = int(b._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
+    assert pa != pb
