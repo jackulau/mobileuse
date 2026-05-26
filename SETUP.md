@@ -510,3 +510,121 @@ The daemon writes `connecting to Appium…`, `session ok`, `stale session, recon
 - Both CLIs (`iphone-harness`, `android-harness`) with helpers pre-imported.
 
 Daily workflow: plug in phone → `appium --base-path /` → `<harness> -c '...'`.
+
+---
+
+# Part D — Drive multiple devices (multi-device / multiboxing)
+
+You can drive several iPhones, Pixels, or a mix simultaneously. Each
+device runs its own named daemon (separate socket + Appium port).
+
+## D1. Discovery (no UDID typing)
+
+```bash
+mobile-use devices list             # prints PLATFORM / NAME / UDID for every connected device
+mobile-use devices list --json      # machine-readable for scripts
+```
+
+Under the hood: `idevice_id -l` (iOS) + `adb devices -l` (Android). If a
+tool is missing the table is empty and a hint shows what to install per
+platform.
+
+On **Windows**, iOS discovery returns empty — Windows can't talk to
+iPhones directly. Use the [`--remote-daemon` Mac bridge](#part-c--ios-from-windows--linux-remote-mac-bridge) instead.
+
+## D2. Build a pool
+
+```python
+from mobile_use import DevicePool
+
+# auto-populate from `mobile-use devices list`:
+pool = DevicePool.from_connected(
+    xcode_org_id="ABCDE12345",        # applied to every iOS device
+    wda_bundle_id="com.you.wda",
+)
+
+# or cherry-pick by UDID:
+pool = DevicePool()
+pool.add_from_udid("00008030-XXX", xcode_org_id="ABCDE12345", wda_bundle_id="com.you.wda")
+pool.add_from_udid("SERIAL123")     # Android — no extra kwargs needed
+```
+
+`DevicePool.from_connected()` errors clearly when zero devices are
+connected, pointing at the missing CLI tool per platform.
+
+## D3. Run things in parallel
+
+```python
+pool.ensure_all_ready()             # spawn every named daemon in parallel
+pool.broadcast(lambda d: d.tap_at_xy(200, 400))
+shots = pool.broadcast(lambda d: d.screenshot())
+# → {"iPhone-13": {"result": png_bytes}, "Pixel-7": {"result": png_bytes}, ...}
+```
+
+`broadcast()` keys every result by device name. One device throwing
+returns an `"error"` entry for that device without blocking the others.
+
+Filtered variants: `pool.broadcast_ios(fn)`, `pool.broadcast_android(fn)`.
+
+## D4. Inspect + reset named daemons
+
+```bash
+mobile-use devices status           # which named daemons are alive
+mobile-use devices status --json
+mobile-use devices reload <name>    # cleanup_stale + restart_daemon for one
+mobile-use devices reload --all     # restart every running named daemon
+```
+
+Single-shot CLI use without a pool — `--name` flag selects an instance:
+
+```bash
+mobile-use --ios --name iphone-A -c 'print(active_app())'
+mobile-use --android --name pixel-1 -c 'print(active_app())'
+```
+
+Sockets land at `/tmp/iph-<name>.sock` / `/tmp/anh-<name>.sock`.
+
+## D5. Appium port allocation
+
+Every named daemon gets its own auto-allocated Appium port in the range
+**4724–4799** (the default unnamed daemon stays on 4723). Allocation is
+deterministic per name (same name → same port across restarts), and
+falls back if a chosen port is bound.
+
+You can override:
+
+```python
+pool.add_ios("iphone-A", udid="...", appium_url="http://127.0.0.1:4723")
+pool.add_android("pixel-1", udid="...", appium_url="http://mac.local:4723")
+```
+
+You'll need an Appium server listening on each allocated port. Two
+options:
+
+```bash
+# Option 1 — Appium handles many sessions on one port (default for single device):
+appium --base-path /                        # on 4723
+
+# Option 2 — separate Appium per device (recommended for multi-device):
+appium --base-path / --port 4724            # device A
+appium --base-path / --port 4775            # device B
+```
+
+The Python API doesn't spawn Appium for you — that's still your call.
+Plan: one Appium per port allocated by `DevicePool`.
+
+## D6. Troubleshooting multi-device
+
+- **`Appium 4723 in use`** when spawning a named daemon → another daemon
+  already bound. Check `lsof -iTCP:4723-4799 -sTCP:LISTEN`. Allocate a
+  specific port via `appium_url=` or reload the colliding daemon.
+- **One device "starves"** in `broadcast()` → that device's daemon is
+  unresponsive. `mobile-use devices reload <name>` resets it.
+- **Daemons collide** (same name → same socket) → only one wins. Use
+  distinct names per device (`DevicePool.from_connected()` already does
+  this via auto-indexing).
+- **`broadcast` returns errors for every device** → the wrapped function
+  may be importing something thread-unsafe. Wrap the body in a try/except
+  and return the error message so it's keyed by name.
+- **Daemon won't come up for one device** → run the per-platform doctor
+  scoped to that name: `IPH_NAME=iphone-A iphone-harness --doctor`.

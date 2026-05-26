@@ -77,6 +77,36 @@ codesigning are macOS-only by Apple). Two patterns:
 See [`SETUP.md` → "iOS from Windows / Linux"](SETUP.md#ios-from-windows--linux)
 for the full walkthrough.
 
+### Multi-device — drive several phones at once
+
+```bash
+mobile-use devices list             # auto-detect every connected iOS + Android
+mobile-use devices status           # show which named daemons are running
+mobile-use devices reload --all     # restart every named daemon
+```
+
+Python API mirrors the CLI — no manual UDID lookup, no port juggling:
+
+```python
+from mobile_use import DevicePool
+
+pool = DevicePool.from_connected(
+    xcode_org_id="ABCDE12345",        # iOS — set once for every iPhone in the pool
+    wda_bundle_id="com.you.wda",
+)
+pool.ensure_all_ready()                # parallel daemon spawn, isolated Appium ports
+pool.broadcast(lambda d: d.tap_at_xy(200, 400))
+pool.broadcast(lambda d: d.screenshot())  # → {name: {"result": png_bytes}}
+```
+
+Each device gets its own daemon socket (`/tmp/iph-<name>.sock`,
+`/tmp/anh-<name>.sock`) and its own auto-allocated Appium port in
+4724-4799 so multiple iPhones / Pixels can run side by side without
+collisions. Override with `appium_url=` if you need a specific port or a
+remote Appium server.
+
+End-to-end example: [`docs/demos/multi-device-broadcast.py`](docs/demos/multi-device-broadcast.py).
+
 ### Runtime helpers (no device pain)
 
 ```python
