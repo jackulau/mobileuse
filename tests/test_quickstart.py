@@ -121,8 +121,9 @@ def test_appium_phase_passes_when_reachable(monkeypatch):
 
 
 def test_appium_reachable_returns_false_on_url_error(monkeypatch):
-    from mobile_use import quickstart
     import urllib.error
+
+    from mobile_use import quickstart
     def boom(url, timeout=None):
         raise urllib.error.URLError("connection refused")
     monkeypatch.setattr(quickstart.urllib.request, "urlopen", boom)

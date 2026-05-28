@@ -13,7 +13,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from iphone_harness import _ipc as ipc
 
-
 NAME = os.environ.get("IPH_NAME", "default")
 LOG = str(ipc.log_path(NAME))
 PID = str(ipc.pid_path(NAME))

@@ -9,7 +9,6 @@ from contextlib import redirect_stdout
 
 import pytest
 
-
 CHECKS_BOTH = [
     "_check_brew_pkg",
     "_check_node",
@@ -103,9 +102,10 @@ def test_android_doctor_includes_remediation_line_per_fail():
 
 def test_error_messages_point_to_doctor():
     """_send wraps unreachable error with `--doctor` remediation."""
-    import iphone_harness.helpers as ih
-    import android_harness.helpers as ah
     import inspect
+
+    import android_harness.helpers as ah
+    import iphone_harness.helpers as ih
     src_i = inspect.getsource(ih._send)
     src_a = inspect.getsource(ah._send)
     assert "iphone-harness --doctor" in src_i
@@ -163,8 +163,9 @@ def test_android_doctor_includes_battery_line():
 def test_total_doctor_checks_at_least_14():
     """Combined iOS + Android numbered checks should be ≥14 (verify D8 target)."""
     import re
-    from iphone_harness import admin as ios_admin
+
     from android_harness import admin as anh_admin
+    from iphone_harness import admin as ios_admin
     ios_out = _run_doctor_output(ios_admin)
     anh_out = _run_doctor_output(anh_admin)
     ios_n = len(re.findall(r"^\[\d+/\d+\]", ios_out, flags=re.MULTILINE))

@@ -164,8 +164,9 @@ def test_records_with_iphone_harness_helpers():
 
 
 def test_records_with_android_harness_helpers():
-    import android_harness.helpers as anh
     import tempfile
+
+    import android_harness.helpers as anh
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as f:
         path = f.name
     record_replay.start_recording(path, helpers=anh, fn_names=("tap_at_xy",))

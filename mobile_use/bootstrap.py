@@ -256,9 +256,9 @@ def run(ios=True, android=True, dry_run=False):
             subprocess.check_call(cmd)
             # Re-check.
             if check():
-                print(f"   OK")
+                print("   OK")
             else:
-                print(f"   POST-INSTALL CHECK STILL FAILS — investigate manually")
+                print("   POST-INSTALL CHECK STILL FAILS — investigate manually")
                 rc = 1
         except subprocess.CalledProcessError as e:
             print(f"   FAIL ({e.returncode}). Run the command yourself to see the full error.")

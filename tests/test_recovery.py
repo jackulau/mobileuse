@@ -7,9 +7,8 @@ from unittest import mock
 
 import pytest
 
-from iphone_harness import helpers as iph
 from android_harness import helpers as anh
-
+from iphone_harness import helpers as iph
 
 # ---- @retry_on_disconnect (iOS) -------------------------------------------
 

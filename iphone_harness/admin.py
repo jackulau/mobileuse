@@ -532,7 +532,7 @@ def run_doctor():
         pid = ipc.identify(NAME) or "?"
         print(f"   OK: alive (pid={pid}, sock={ipc.sock_addr(NAME)})")
     else:
-        print(f"   not running (will spawn on first `iphone-harness -c`)")
+        print("   not running (will spawn on first `iphone-harness -c`)")
 
     print(f"[{total}/{total}] Recent daemon log")
     tail = _log_tail()

@@ -17,7 +17,6 @@ from unittest import mock
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -70,7 +69,10 @@ def test_ios_sign_wda_help_returns_zero():
 
 def test_exec_no_traceback_noise_from_cli_internals():
     """User script error should not surface cli.py traceback frames."""
-    rc, out, err = _run_cli("--ios", "-c", "raise ValueError('user bug')")
+    rc, out, err = _run_cli(
+        "--ios", "-c", "raise ValueError('user bug')",
+        env={"IPH_UDID": "stub-udid-for-test", "IPH_DAEMON_MODULE": "tests._mock_iphone_daemon"},
+    )
     # rc may be 1 (script error) OR show daemon-unreachable depending on env.
     # In either case, "cli.py" should NOT appear in the user-visible output.
     if "ValueError" in err:
@@ -80,7 +82,10 @@ def test_exec_no_traceback_noise_from_cli_internals():
 
 def test_exec_syntax_error_clean_message():
     """SyntaxError in -c snippet → friendly one-line error (when env is ready)."""
-    rc, _, err = _run_cli("--ios", "-c", "def (", env={"IPH_UDID": "stub-udid-for-test"})
+    rc, _, err = _run_cli(
+        "--ios", "-c", "def (",
+        env={"IPH_UDID": "stub-udid-for-test", "IPH_DAEMON_MODULE": "tests._mock_iphone_daemon"},
+    )
     if rc != 0 and "daemon didn't come up" not in err and "daemon did not come up" not in err:
         assert "Syntax error" in err or "SyntaxError" in err or "daemon" in err.lower()
 

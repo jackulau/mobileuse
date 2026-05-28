@@ -19,7 +19,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # Where appium-xcuitest-driver installs WebDriverAgent's xcodeproj.
 WDA_PROJECT_CANDIDATES = (
     "~/.appium/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj",

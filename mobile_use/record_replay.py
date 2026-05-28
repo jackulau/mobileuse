@@ -29,7 +29,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 # Default set of helpers to record. Anything not listed is left alone.
 RECORDED_HELPERS = (
     "tap_at_xy", "tap",

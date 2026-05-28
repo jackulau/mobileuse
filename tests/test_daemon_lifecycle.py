@@ -14,11 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from iphone_harness import _ipc as iph_ipc
-from iphone_harness import admin as iph_admin
 from android_harness import _ipc as anh_ipc
 from android_harness import admin as anh_admin
-
+from iphone_harness import _ipc as iph_ipc
+from iphone_harness import admin as iph_admin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

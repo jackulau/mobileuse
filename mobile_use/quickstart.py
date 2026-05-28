@@ -121,18 +121,18 @@ def run_doctor_phase(platform):
     if rc == 0:
         return True, ""
     return False, ("doctor reported failures (see above). Run "
-                   f"`mobile-use bootstrap` to install missing deps, then re-run.")
+                   "`mobile-use bootstrap` to install missing deps, then re-run.")
 
 
 def run_smoke_phase(platform):
     """Returns (ok: bool, msg: str). Hits the device via the daemon."""
     print(f"\n[smoke] {platform}: ensure daemon + call active_app() + screenshot()")
     if platform == "ios":
-        from iphone_harness.admin import ensure_daemon
         from iphone_harness import helpers as h
+        from iphone_harness.admin import ensure_daemon
     else:
-        from android_harness.admin import ensure_daemon
         from android_harness import helpers as h
+        from android_harness.admin import ensure_daemon
     try:
         ensure_daemon()
     except Exception as e:

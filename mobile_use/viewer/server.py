@@ -21,7 +21,6 @@ import threading
 import time
 from pathlib import Path
 
-
 _INDEX_HTML = b"""<!doctype html>
 <html lang=en>
 <head>

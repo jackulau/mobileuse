@@ -16,9 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from iphone_harness import _ipc as iph_ipc
 from android_harness import _ipc as anh_ipc
-
+from iphone_harness import _ipc as iph_ipc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

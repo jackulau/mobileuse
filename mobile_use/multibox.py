@@ -27,7 +27,6 @@ import os
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 _APPIUM_PORT_RANGE = (4724, 4799)
 
 
@@ -98,9 +97,10 @@ class Device:
                 os.environ[k] = v
 
             import importlib
+
             import iphone_harness._ipc
-            import iphone_harness.helpers
             import iphone_harness.admin
+            import iphone_harness.helpers
 
             importlib.reload(iphone_harness._ipc)
             importlib.reload(iphone_harness.helpers)
@@ -118,9 +118,10 @@ class Device:
                 os.environ[k] = v
 
             import importlib
+
             import android_harness._ipc
-            import android_harness.helpers
             import android_harness.admin
+            import android_harness.helpers
 
             importlib.reload(android_harness._ipc)
             importlib.reload(android_harness.helpers)

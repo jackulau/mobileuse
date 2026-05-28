@@ -5,7 +5,9 @@ from unittest.mock import patch
 import pytest
 
 from mobile_use.multibox import (
-    _APPIUM_PORT_RANGE, _allocate_appium_port, _port_is_free,
+    _APPIUM_PORT_RANGE,
+    _allocate_appium_port,
+    _port_is_free,
 )
 
 

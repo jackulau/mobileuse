@@ -6,9 +6,8 @@ import base64
 
 import pytest
 
-from iphone_harness import helpers as iph
 from android_harness import helpers as anh
-
+from iphone_harness import helpers as iph
 
 # ---- iOS ------------------------------------------------------------------
 

@@ -70,7 +70,7 @@ def test_render_env_includes_required_keys():
 
 
 def test_write_env_round_trips(tmp_path):
-    from mobile_use.setup_env import write_env, parse_env
+    from mobile_use.setup_env import parse_env, write_env
     target = tmp_path / "env"
     write_env(target, {"IPH_UDID": "X", "IPH_XCODE_ORG_ID": "T",
                        "IPH_WDA_BUNDLE_ID": "com.y", "ANH_UDID": "S"})

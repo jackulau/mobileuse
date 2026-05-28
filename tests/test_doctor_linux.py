@@ -13,7 +13,6 @@ import sys
 
 import pytest
 
-
 # ---- mobile_use._platform.install_hint -----------------------------------
 
 def test_install_hint_macos(monkeypatch):

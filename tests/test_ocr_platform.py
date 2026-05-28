@@ -56,8 +56,8 @@ def test_iphone_ocr_does_not_crash_at_import_on_linux(monkeypatch):
     # Force a fresh import path
     for mod in ("iphone_harness.helpers", "android_harness.helpers"):
         sys.modules.pop(mod, None)
-    import iphone_harness.helpers  # noqa: F401
     import android_harness.helpers  # noqa: F401
+    import iphone_harness.helpers  # noqa: F401
 
 
 def test_iphone_ocr_error_is_caught_as_runtime_error(monkeypatch):

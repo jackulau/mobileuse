@@ -136,8 +136,8 @@ def _run_ios(args):
     if env_err:
         sys.exit(env_err)
 
-    from iphone_harness.admin import ensure_daemon
     import iphone_harness.helpers as _helpers
+    from iphone_harness.admin import ensure_daemon
     try:
         ensure_daemon()
     except RuntimeError as e:
@@ -181,8 +181,8 @@ def _run_android(args):
     if env_err:
         sys.exit(env_err)
 
-    from android_harness.admin import ensure_daemon
     import android_harness.helpers as _helpers
+    from android_harness.admin import ensure_daemon
     try:
         ensure_daemon()
     except RuntimeError as e:

@@ -15,9 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from iphone_harness import admin as iph_admin
 from android_harness import admin as anh_admin
-
+from iphone_harness import admin as iph_admin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -138,16 +137,18 @@ def test_cli_remote_daemon_invalid_uri_exits():
 
 def test_platform_is_windows_only_on_win32(monkeypatch):
     """is_windows() reflects sys.platform; not host-detected via shell."""
-    from mobile_use import _platform
     # Use the actual sys.platform — the function is a thin wrapper.
     import sys as _sys
+
+    from mobile_use import _platform
     assert _platform.is_windows() is (_sys.platform == "win32")
 
 
 def test_platform_needs_remote_mac_for_ios_on_non_darwin():
     """On macOS, needs_remote_mac_for_ios() is False; elsewhere True."""
-    from mobile_use import _platform
     import sys as _sys
+
+    from mobile_use import _platform
     expected = _sys.platform != "darwin"
     assert _platform.needs_remote_mac_for_ios() is expected
 

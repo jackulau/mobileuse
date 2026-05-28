@@ -19,7 +19,7 @@ import time
 
 from .collector import Collector
 from .session import Session, load_session
-from .skills import write_skill, list_skills, skill_template
+from .skills import list_skills, skill_template, write_skill
 
 
 class AgentLoop:
@@ -42,11 +42,11 @@ class AgentLoop:
         if self._helpers is not None:
             return
         if self.platform == "ios":
-            import iphone_harness.helpers as h
             import iphone_harness.admin as a
+            import iphone_harness.helpers as h
         elif self.platform == "android":
-            import android_harness.helpers as h
             import android_harness.admin as a
+            import android_harness.helpers as h
         else:
             raise RuntimeError(f"Unknown platform: {self.platform}")
         self._helpers = h
@@ -350,6 +350,20 @@ def retarget_action(intent, recorded_fp, current_ui, recorded_call, llm,
 
 def run_agent(platform=None, args=None):
     """Entry point from CLI."""
+    if args and args[0] in {"-h", "--help"}:
+        print(
+            "mobile-use agent [--ios|--android] [--session NAME]\n"
+            "\n"
+            "Start the persistent agent REPL loop on the connected device.\n"
+            "\n"
+            "Options:\n"
+            "  --session NAME   Resume / create a named session (default: 'default')\n"
+            "  -h, --help       Show this message\n"
+            "\n"
+            "Environment:\n"
+            "  MOBILE_USE_HEADED=1   Spin up live MJPEG viewer in the browser\n"
+        )
+        return
     if platform is None:
         from .cli import _detect_platform
         platform = _detect_platform()

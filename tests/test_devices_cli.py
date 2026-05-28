@@ -8,7 +8,6 @@ import pytest
 
 from mobile_use import devices
 
-
 # ---- discover_connected --------------------------------------------------
 
 def test_discover_empty_when_no_tools(monkeypatch):
@@ -253,7 +252,9 @@ def test_cli_devices_view_parse_args():
 def test_cli_devices_view_mock_starts_server():
     """Smoke test the --mock path end-to-end via direct function call,
     then tear the viewer down without going through SIGINT."""
-    import urllib.request, json
+    import json
+    import urllib.request
+
     from mobile_use import devices as dev
     from mobile_use.viewer.multi_server import MultiViewerServer
 

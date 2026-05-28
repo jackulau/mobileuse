@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -77,8 +76,8 @@ def _free_port():
 def test_e2e_headed_ios(monkeypatch):
     """Daemon → ViewerServer → HTTP /stream returns multipart JPEG. Tests the
     full data path a Windows user sees when they hit --headed."""
-    from iphone_harness import _ipc as ipc
     import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
     from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"
@@ -117,8 +116,8 @@ def test_e2e_headed_ios(monkeypatch):
 # ---- e2e_headed_android -------------------------------------------------
 
 def test_e2e_headed_android(monkeypatch):
-    from android_harness import _ipc as ipc
     import android_harness.helpers as ah
+    from android_harness import _ipc as ipc
     from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"
@@ -209,8 +208,8 @@ def test_e2e_stream_loop_progresses(monkeypatch):
     """Frame number must advance over a 1-second poll — proves the daemon's
     capture loop is actually running, not just returning the same buffered
     frame forever."""
-    from iphone_harness import _ipc as ipc
     import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
 
     name = f"tst{uuid.uuid4().hex[:10]}"
     monkeypatch.setenv("IPH_NAME", name)

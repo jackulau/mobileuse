@@ -10,16 +10,16 @@ def test_import_mobile_use():
 
 def test_import_iphone_harness():
     import iphone_harness
-    from iphone_harness import admin, helpers, daemon, _ipc
+    from iphone_harness import _ipc, admin, daemon, helpers
 
 
 def test_import_android_harness():
     import android_harness
-    from android_harness import admin, helpers, daemon, _ipc
+    from android_harness import _ipc, admin, daemon, helpers
 
 
 def test_import_shared_modules():
-    from mobile_use import cli, multibox, agent_loop, session, skills
+    from mobile_use import agent_loop, cli, multibox, session, skills
 
 
 def test_cli_entry_points():

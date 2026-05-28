@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -59,8 +58,8 @@ def _cleanup(platform, name):
 @pytest.fixture
 def iph_viewer(monkeypatch):
     """Mock iphone daemon + ViewerServer wired together, ready to hit via HTTP."""
-    from iphone_harness import _ipc as ipc
     import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
     from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"
@@ -91,8 +90,8 @@ def iph_viewer(monkeypatch):
 
 @pytest.fixture
 def anh_viewer(monkeypatch):
-    from android_harness import _ipc as ipc
     import android_harness.helpers as ah
+    from android_harness import _ipc as ipc
     from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"
@@ -214,10 +213,11 @@ def test_viewer_mjpeg_still_android(anh_viewer):
 def test_viewer_stop_releases_port(monkeypatch):
     """After stop(), the port should be reusable. ViewerServer is the only
     holder; no zombie threads should keep it bound."""
-    from iphone_harness import _ipc as ipc
-    import iphone_harness.helpers as ih
-    from mobile_use.viewer.server import ViewerServer
     import socket as _socket
+
+    import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
+    from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"
     monkeypatch.setenv("IPH_NAME", name)
@@ -253,8 +253,8 @@ def test_viewer_stop_releases_port(monkeypatch):
 
 def test_viewer_context_manager(monkeypatch):
     """Confirm `with ViewerServer(...) as v:` start/stop pair works."""
-    from iphone_harness import _ipc as ipc
     import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
     from mobile_use.viewer.server import ViewerServer
 
     name = f"tst{uuid.uuid4().hex[:10]}"

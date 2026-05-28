@@ -1,6 +1,6 @@
 """Unit tests for mobile_use.skills — stateless functions only."""
-import tempfile
 import os
+import tempfile
 
 import pytest
 
@@ -54,7 +54,7 @@ def test_list_skills_nonexistent_app():
 def test_write_and_read_skill(tmp_path, monkeypatch):
     monkeypatch.setattr("mobile_use.skills.SKILLS_DIR", tmp_path)
 
-    from mobile_use.skills import write_skill, read_skill, list_skills
+    from mobile_use.skills import list_skills, read_skill, write_skill
 
     path = write_skill("com.test.app", "my-skill", "# My Skill\nContent here.")
     assert os.path.exists(path)

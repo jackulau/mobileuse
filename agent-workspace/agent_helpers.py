@@ -20,7 +20,6 @@ import os
 import sys
 import time
 
-
 # ---- platform detection ----------------------------------------------------
 #
 # The harness imports this file and copies its public attributes into the

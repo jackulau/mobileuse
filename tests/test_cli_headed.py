@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -127,11 +126,11 @@ def test_maybe_start_viewer_real(monkeypatch):
     import subprocess as _sp
     import sys as _sys
     import time as _time
-    import uuid as _uuid
     import urllib.request as _ur
+    import uuid as _uuid
 
-    from iphone_harness import _ipc as ipc
     import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
 
     name = f"tst{_uuid.uuid4().hex[:10]}"
     monkeypatch.setenv("IPH_NAME", name)

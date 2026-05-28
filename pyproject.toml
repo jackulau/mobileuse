@@ -42,3 +42,26 @@ include = ["mobile_use*", "iphone_harness*", "android_harness*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["tests/_fixtures", "**/.venv", "**/build", "**/dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = [
+    "E402",  # module-level import not at top — legitimate for lazy-import / cycle-breaking
+    "E501",  # line length handled separately
+    "E701",  # compact one-line if/return style is conventional here
+    "E702",  # `x = ...; y = ...` style is conventional in cleanup blocks
+    "E741",  # ambiguous variable names (l, I, O) — fine in math/loop bodies
+    "E731",  # lambda assignment — fine for short callbacks
+    "F401",  # unused import — many __init__.py re-exports rely on this
+    "F811",  # redefined names — overload-style helpers in tests
+    "F841",  # unused local — common in assignment-for-debugging
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402", "F401", "F811", "F841"]
+"**/__init__.py" = ["F401", "F403"]

@@ -19,7 +19,7 @@ def test_android_tree_cache_exists():
 
 
 def test_iphone_invalidate_tree_cache():
-    from iphone_harness.helpers import invalidate_tree_cache, _tree_cache_time
+    from iphone_harness.helpers import _tree_cache_time, invalidate_tree_cache
     invalidate_tree_cache()
     from iphone_harness import helpers
     assert helpers._tree_cache is None
@@ -74,6 +74,7 @@ def test_android_retry_delay_low():
 
 def test_iphone_find_accepts_tree_param():
     import inspect
+
     from iphone_harness.helpers import find, find_all
     sig_find = inspect.signature(find)
     sig_findall = inspect.signature(find_all)
@@ -83,6 +84,7 @@ def test_iphone_find_accepts_tree_param():
 
 def test_android_find_accepts_tree_param():
     import inspect
+
     from android_harness.helpers import find, find_all
     sig_find = inspect.signature(find)
     sig_findall = inspect.signature(find_all)
@@ -92,6 +94,7 @@ def test_android_find_accepts_tree_param():
 
 def test_iphone_ui_tree_compact_param():
     import inspect
+
     from iphone_harness.helpers import ui_tree
     sig = inspect.signature(ui_tree)
     assert 'compact' in sig.parameters
@@ -99,6 +102,7 @@ def test_iphone_ui_tree_compact_param():
 
 def test_android_ui_tree_compact_param():
     import inspect
+
     from android_harness.helpers import ui_tree
     sig = inspect.signature(ui_tree)
     assert 'compact' in sig.parameters
@@ -106,14 +110,15 @@ def test_android_ui_tree_compact_param():
 
 def test_cli_auto_detect_timeout():
     """Verify auto-detect uses fast timeouts."""
-    from mobile_use import cli
     import inspect
+
+    from mobile_use import cli
     src = inspect.getsource(cli._detect_platform)
     assert "timeout=1.5" in src
 
 
 def test_agent_helpers_lazy_flag():
-    from iphone_harness import helpers as iph
     from android_harness import helpers as anh
+    from iphone_harness import helpers as iph
     assert hasattr(iph, '_agent_helpers_loaded')
     assert hasattr(anh, '_agent_helpers_loaded')

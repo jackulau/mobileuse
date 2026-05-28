@@ -5,11 +5,10 @@ approach-critic agents and must stay green to prevent regression.
 """
 import pytest
 
-from iphone_harness import admin as iph_admin
-from iphone_harness import helpers as iph_helpers
 from android_harness import admin as anh_admin
 from android_harness import helpers as anh_helpers
-
+from iphone_harness import admin as iph_admin
+from iphone_harness import helpers as iph_helpers
 
 # ---- _pid_alive rejects bool (isinstance(True, int) is True) --------------
 
@@ -206,9 +205,9 @@ def test_anh_record_screen_rejects_negative_duration():
 
 def test_iph_battery_low_returns_true_not_false():
     """Low battery should warn, not fail (otherwise doctor refuses to run)."""
+    import os
     import subprocess
     from unittest.mock import patch
-    import os
     with patch.dict(os.environ, {"IPH_UDID": "fake"}):
         with patch("shutil.which", return_value="/usr/local/bin/ideviceinfo"):
             with patch("subprocess.check_output", return_value=b"15\n"):
@@ -228,9 +227,9 @@ def test_anh_battery_low_returns_true_not_false():
 
 
 def test_iph_battery_full_returns_true():
+    import os
     import subprocess
     from unittest.mock import patch
-    import os
     with patch.dict(os.environ, {"IPH_UDID": "fake"}):
         with patch("shutil.which", return_value="/usr/local/bin/ideviceinfo"):
             with patch("subprocess.check_output", return_value=b"85\n"):
@@ -305,6 +304,7 @@ def test_iph_battery_handles_garbage_output(monkeypatch):
 def test_record_replay_recording_context_manager(tmp_path):
     """recording() context manager guarantees stop_recording on exception."""
     import types
+
     from mobile_use.record_replay import recording
 
     mod = types.ModuleType("test_ctx")
@@ -375,6 +375,7 @@ def test_bootstrap_linux_install_drops_sudo_when_root(monkeypatch):
 def test_record_replay_restores_helpers_when_helper_call_raises(tmp_path):
     """If a helper raises during recording, originals must still be restored on stop."""
     import types
+
     from mobile_use import record_replay
 
     mod = types.ModuleType("test_helpers")

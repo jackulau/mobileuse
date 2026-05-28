@@ -235,6 +235,7 @@ def test_have_xcode_returns_true_when_xcodebuild_works(monkeypatch):
 def test_have_xcode_returns_false_when_xcodebuild_errors(monkeypatch):
     """xcode-select error on CLT-only setup must return False, not raise."""
     import subprocess as sp
+
     from mobile_use import bootstrap
     monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
     monkeypatch.setattr(bootstrap, "_have", lambda c: True)

@@ -1,6 +1,7 @@
 """Unit tests for mobile_use.multibox — pool management without devices."""
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from mobile_use.multibox import Device, DevicePool
 

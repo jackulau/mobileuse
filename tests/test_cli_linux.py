@@ -13,7 +13,6 @@ import sys
 
 import pytest
 
-
 # ---- mobile-use init -----------------------------------------------------
 
 def test_init_ios_only_on_linux_prints_remote_mac_guidance(monkeypatch, capsys, tmp_path):

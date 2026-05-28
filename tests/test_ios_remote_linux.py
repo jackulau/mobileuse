@@ -25,7 +25,6 @@ import sys
 
 import pytest
 
-
 # ---- IPH_CONNECT TCP daemon (client-only mode) --------------------------
 
 def test_is_remote_daemon_off_by_default(monkeypatch):

@@ -11,9 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from mobile_use import record_replay
-from mobile_use import agent_loop
-
+from mobile_use import agent_loop, record_replay
 
 # ---------- helpers ----------
 

@@ -8,8 +8,8 @@
 import sys
 
 from .admin import (
-    _version,
     NAME,
+    _version,
     daemon_alive,
     ensure_daemon,
     restart_daemon,

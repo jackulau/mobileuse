@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -39,21 +38,21 @@ def isolated_name(monkeypatch):
 
 def test_e2e_smoke_all_modules_import():
     """All public modules import without side effects."""
-    import mobile_use
-    import mobile_use.cli
-    import mobile_use.bootstrap
-    import mobile_use.setup_env
-    import mobile_use.quickstart
-    import mobile_use.ios_wda
-    import mobile_use.record_replay
-    import iphone_harness
-    import iphone_harness.admin
-    import iphone_harness.helpers
-    import iphone_harness._ipc
     import android_harness
+    import android_harness._ipc
     import android_harness.admin
     import android_harness.helpers
-    import android_harness._ipc
+    import iphone_harness
+    import iphone_harness._ipc
+    import iphone_harness.admin
+    import iphone_harness.helpers
+    import mobile_use
+    import mobile_use.bootstrap
+    import mobile_use.cli
+    import mobile_use.ios_wda
+    import mobile_use.quickstart
+    import mobile_use.record_replay
+    import mobile_use.setup_env
 
     assert hasattr(mobile_use, "__version__")
 
@@ -71,8 +70,8 @@ def test_e2e_bootstrap_plan_composes():
 
 def test_e2e_doctor_runs_without_device(capsys):
     """Both platform doctors should run to completion (even with no device)."""
-    from iphone_harness import admin as ios_admin
     from android_harness import admin as anh_admin
+    from iphone_harness import admin as ios_admin
     out_buf = io.StringIO()
     with redirect_stdout(out_buf):
         ios_rc = ios_admin.run_doctor()
@@ -87,7 +86,8 @@ def test_e2e_doctor_runs_without_device(capsys):
 
 def test_e2e_daemon_spawn_roundtrip(isolated_name):
     """Spawn the mock iphone daemon end-to-end via admin.ensure_daemon."""
-    from iphone_harness import admin, _ipc as ipc
+    from iphone_harness import _ipc as ipc
+    from iphone_harness import admin
     try:
         admin.ensure_daemon(wait=10.0, name=isolated_name)
         assert ipc.ping(isolated_name, timeout=1.0) is True
@@ -109,8 +109,8 @@ def test_e2e_daemon_spawn_roundtrip(isolated_name):
 
 def test_e2e_record_replay_against_real_helpers(tmp_path):
     """Record/replay should wrap & unwrap helper functions without breaking them."""
-    from mobile_use import record_replay
     import iphone_harness.helpers as iph
+    from mobile_use import record_replay
 
     orig_tap = iph.tap_at_xy
     out = tmp_path / "test.py"
@@ -122,9 +122,10 @@ def test_e2e_record_replay_against_real_helpers(tmp_path):
 
 def test_e2e_recording_helper_signatures():
     """record_screen on both platforms takes (duration, path) and returns string."""
-    from iphone_harness.helpers import record_screen as iph_rec
-    from android_harness.helpers import record_screen as anh_rec
     import inspect
+
+    from android_harness.helpers import record_screen as anh_rec
+    from iphone_harness.helpers import record_screen as iph_rec
 
     iph_sig = inspect.signature(iph_rec)
     anh_sig = inspect.signature(anh_rec)
@@ -136,8 +137,8 @@ def test_e2e_recording_helper_signatures():
 
 def test_e2e_recovery_helpers_present_both_platforms():
     """Recovery API surface is consistent across platforms."""
-    import iphone_harness.helpers as iph
     import android_harness.helpers as anh
+    import iphone_harness.helpers as iph
     for mod in (iph, anh):
         assert callable(getattr(mod, "wake_device"))
         assert callable(getattr(mod, "is_locked"))
@@ -194,8 +195,8 @@ def test_e2e_init_module_importable():
 
 def test_e2e_no_regressions_in_helpers_public_api():
     """Key public helpers stay exported (catches accidental deletes/renames)."""
-    import iphone_harness.helpers as iph
     import android_harness.helpers as anh
+    import iphone_harness.helpers as iph
     REQUIRED = ("tap_at_xy", "tap", "swipe", "type_text", "screenshot", "window_size",
                 "appium", "find", "find_all", "active_app",
                 "wake_device", "is_locked", "retry_on_disconnect",
@@ -236,7 +237,8 @@ def test_e2e_minus_c_runs_against_mock_daemon(isolated_name, tmp_path):
     assert "SpringBoard" in out or "bundleId" in out
 
     # Teardown the daemon we just spawned
-    from iphone_harness import admin, _ipc as ipc
+    from iphone_harness import _ipc as ipc
+    from iphone_harness import admin
     admin.restart_daemon(isolated_name)
     deadline = time.time() + 5.0
     while time.time() < deadline and ipc.ping(isolated_name, timeout=0.3):
@@ -265,7 +267,8 @@ def test_e2e_minus_c_android_runs_against_mock_daemon(isolated_name):
     assert result.returncode == 0, f"non-zero rc={result.returncode}\nstdout: {out}\nstderr: {err}"
     assert "shot=" in out
 
-    from android_harness import admin, _ipc as ipc
+    from android_harness import _ipc as ipc
+    from android_harness import admin
     admin.restart_daemon(isolated_name)
     deadline = time.time() + 5.0
     while time.time() < deadline and ipc.ping(isolated_name, timeout=0.3):

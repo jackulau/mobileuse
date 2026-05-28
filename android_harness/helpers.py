@@ -203,7 +203,7 @@ def retry_on_disconnect(max_attempts=3, backoff=0.5):
                     if attempt < max_attempts - 1:
                         time.sleep(backoff * (2 ** attempt))
                         try:
-                            from .admin import restart_daemon, ensure_daemon
+                            from .admin import ensure_daemon, restart_daemon
                             restart_daemon()
                             ensure_daemon()
                             wake_device()
@@ -831,6 +831,7 @@ def annotated_screenshot(path=None, run_ocr=True):
 
 import base64 as _base64
 import subprocess as _subprocess
+
 
 def record_screen(duration=10, path=None, bit_rate="4M", size=None):
     """Record the device screen for `duration` seconds. Returns the host path.
