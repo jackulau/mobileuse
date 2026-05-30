@@ -52,6 +52,21 @@ WDA_BUNDLE_ID = os.environ.get("IPH_WDA_BUNDLE_ID")
 # Idle session timeout (seconds). Appium's default is 60s; bump it so quiet
 # stretches between agent calls don't kill the session under us.
 NEW_COMMAND_TIMEOUT = int(os.environ.get("IPH_NEW_COMMAND_TIMEOUT", "600"))
+# Min seconds between deep liveness probes. Within this window of a successful
+# command we skip the extra activeAppInfo round-trip on every request; the
+# dispatch path reconnects reactively if the session actually died.
+PROBE_INTERVAL = float(os.environ.get("IPH_PROBE_INTERVAL", "30"))
+
+
+def _is_session_error(e):
+    """True if an exception looks like a dead/invalid Appium session (so we
+    should reconnect + retry rather than surface it to the caller)."""
+    s = str(e).lower()
+    return any(k in s for k in (
+        "invalid session", "session id", "no such session",
+        "session is either terminated", "session does not exist",
+        "a session is either terminated or not started",
+    ))
 
 
 def log(msg):
@@ -169,6 +184,7 @@ class Daemon:
         self._stream_fps = 6.0
         self._stream_quality = 60
         self._stream_max_dim = 800      # largest side in px; thumbnailed
+        self._last_ok = 0.0             # monotonic time of last successful command
 
     async def _drive(self, fn):
         """Run a blocking driver callable on the single driver worker (serialized)."""
@@ -194,24 +210,38 @@ class Daemon:
         log(f"session ok ({self.driver.session_id})")
 
     async def _ensure_session(self):
-        """If the driver is alive, no-op. Else (re)create."""
+        """If the driver is alive, no-op. Else (re)create.
+
+        Throttled: the deep activeAppInfo probe (a real device round-trip) only
+        runs when more than PROBE_INTERVAL has elapsed since the last successful
+        command — so back-to-back agent steps don't each pay an extra round-trip.
+        The cheap zero-round-trip session_id read still runs every time, and the
+        dispatch path reconnects reactively if the session died between probes.
+        """
         if self.driver is None:
             await self._connect()
             return
-        # Cheap liveness probe: ask for session_id. If the session was killed
-        # by Appium's idle timeout or a WDA crash, this raises.
         try:
             await self._drive(lambda: self.driver.session_id)
-            # session_id is just an attribute; do one harmless real call to be sure.
-            await self._drive(lambda: self.driver.execute_script("mobile: activeAppInfo", {}))
         except Exception as e:
-            log(f"stale session, reconnecting: {e}")
-            try:
-                await self._drive(self.driver.quit)
-            except Exception:
-                pass
-            self.driver = None
-            await self._connect()
+            await self._reconnect(e)
+            return
+        if time.monotonic() - self._last_ok < PROBE_INTERVAL:
+            return
+        try:
+            await self._drive(lambda: self.driver.execute_script("mobile: activeAppInfo", {}))
+            self._last_ok = time.monotonic()
+        except Exception as e:
+            await self._reconnect(e)
+
+    async def _reconnect(self, reason):
+        log(f"stale session, reconnecting: {reason}")
+        try:
+            await self._drive(self.driver.quit)
+        except Exception:
+            pass
+        self.driver = None
+        await self._connect()
 
     async def start(self):
         self.stop = asyncio.Event()
@@ -246,13 +276,26 @@ class Daemon:
 
         # Each method is a small dispatch. Helpers send {method: "...", params: {...}}.
         params = req.get("params") or {}
+        handler = _DISPATCH.get(method)
+        if handler is None:
+            return {"error": f"unknown method: {method}"}
         try:
-            handler = _DISPATCH.get(method)
-            if handler is None:
-                return {"error": f"unknown method: {method}"}
             result = await handler(self, params)
+            self._last_ok = time.monotonic()
             return {"result": result}
         except Exception as e:
+            # Reactive recovery: the throttled probe may have skipped a dead
+            # session. If this looks like a session error, reconnect once and
+            # retry before surfacing it.
+            if _is_session_error(e):
+                log(f"session error on {method}, reconnecting + retrying: {e}")
+                try:
+                    await self._reconnect(e)
+                    result = await handler(self, params)
+                    self._last_ok = time.monotonic()
+                    return {"result": result}
+                except Exception as e2:
+                    return {"error": f"{method}: {e2}"}
             return {"error": f"{method}: {e}"}
 
 

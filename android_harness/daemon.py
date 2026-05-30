@@ -50,6 +50,18 @@ DEVICE_NAME = os.environ.get("ANH_DEVICE_NAME", "Android")
 APP_PACKAGE = os.environ.get("ANH_APP_PACKAGE")
 APP_ACTIVITY = os.environ.get("ANH_APP_ACTIVITY")
 NEW_COMMAND_TIMEOUT = int(os.environ.get("ANH_NEW_COMMAND_TIMEOUT", "600"))
+# Min seconds between deep liveness probes (see iphone_harness/daemon.py).
+PROBE_INTERVAL = float(os.environ.get("ANH_PROBE_INTERVAL", "30"))
+
+
+def _is_session_error(e):
+    """True if an exception looks like a dead/invalid Appium session."""
+    s = str(e).lower()
+    return any(k in s for k in (
+        "invalid session", "session id", "no such session",
+        "session is either terminated", "session does not exist",
+        "a session is either terminated or not started",
+    ))
 
 
 def log(msg):
@@ -137,6 +149,7 @@ class Daemon:
         self._stream_fps = 6.0
         self._stream_quality = 60
         self._stream_max_dim = 800
+        self._last_ok = 0.0             # monotonic time of last successful command
 
     async def _drive(self, fn):
         """Run a blocking driver callable on the single driver worker (serialized)."""
@@ -161,20 +174,37 @@ class Daemon:
         log(f"session ok ({self.driver.session_id})")
 
     async def _ensure_session(self):
+        """If the driver is alive, no-op. Else (re)create.
+
+        Throttled: the deep current_activity probe (a real round-trip) only runs
+        when more than PROBE_INTERVAL has elapsed since the last successful
+        command, so back-to-back agent steps don't each pay an extra round-trip.
+        The dispatch path reconnects reactively if the session died between probes.
+        """
         if self.driver is None:
             await self._connect()
             return
         try:
             await self._drive(lambda: self.driver.session_id)
-            await self._drive(lambda: self.driver.current_activity)
         except Exception as e:
-            log(f"stale session, reconnecting: {e}")
-            try:
-                await self._drive(self.driver.quit)
-            except Exception:
-                pass
-            self.driver = None
-            await self._connect()
+            await self._reconnect(e)
+            return
+        if time.monotonic() - self._last_ok < PROBE_INTERVAL:
+            return
+        try:
+            await self._drive(lambda: self.driver.current_activity)
+            self._last_ok = time.monotonic()
+        except Exception as e:
+            await self._reconnect(e)
+
+    async def _reconnect(self, reason):
+        log(f"stale session, reconnecting: {reason}")
+        try:
+            await self._drive(self.driver.quit)
+        except Exception:
+            pass
+        self.driver = None
+        await self._connect()
 
     async def start(self):
         self.stop = asyncio.Event()
@@ -205,13 +235,25 @@ class Daemon:
             return {"error": str(e)}
 
         params = req.get("params") or {}
+        handler = _DISPATCH.get(method)
+        if handler is None:
+            return {"error": f"unknown method: {method}"}
         try:
-            handler = _DISPATCH.get(method)
-            if handler is None:
-                return {"error": f"unknown method: {method}"}
             result = await handler(self, params)
+            self._last_ok = time.monotonic()
             return {"result": result}
         except Exception as e:
+            # Reactive recovery: the throttled probe may have skipped a dead
+            # session. Reconnect once and retry before surfacing a session error.
+            if _is_session_error(e):
+                log(f"session error on {method}, reconnecting + retrying: {e}")
+                try:
+                    await self._reconnect(e)
+                    result = await handler(self, params)
+                    self._last_ok = time.monotonic()
+                    return {"result": result}
+                except Exception as e2:
+                    return {"error": f"{method}: {e2}"}
             return {"error": f"{method}: {e}"}
 
 
