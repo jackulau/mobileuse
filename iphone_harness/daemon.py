@@ -6,6 +6,7 @@ One daemon per IPH_NAME:
   - auto-recovers from stale sessions
 """
 import asyncio
+import concurrent.futures
 import json
 import os
 import sys
@@ -99,9 +100,15 @@ class Daemon:
     def __init__(self):
         self.driver = None
         self.stop = None  # asyncio.Event, set inside start()
-        # Pool a single thread for blocking driver calls so Appium's HTTP
-        # client doesn't fight asyncio's event loop. One driver, one worker.
+        # Pool a SINGLE thread for blocking driver calls. The selenium/Appium
+        # session is not thread-safe; the screen-stream task and IPC method
+        # handlers both call _drive concurrently, so they must serialize onto
+        # one worker. run_in_executor(None,...) uses a multi-worker default pool
+        # and would let two driver calls land on different threads — a data race.
         self._loop = None
+        self._exec = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="iph-driver"
+        )
         # Screen-stream state — populated by screen_stream_start RPC.
         self._stream_task = None
         self._stream_frame = None       # latest JPEG bytes
@@ -111,8 +118,8 @@ class Daemon:
         self._stream_max_dim = 800      # largest side in px; thumbnailed
 
     async def _drive(self, fn):
-        """Run a blocking driver callable in the default executor."""
-        return await self._loop.run_in_executor(None, fn)
+        """Run a blocking driver callable on the single driver worker (serialized)."""
+        return await self._loop.run_in_executor(self._exec, fn)
 
     async def _connect(self):
         """(Re)create the WebDriver session. Retries once on transient Appium errors."""

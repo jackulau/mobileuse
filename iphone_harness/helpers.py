@@ -9,6 +9,7 @@ IPH_AGENT_WORKSPACE/agent_helpers.py.
 """
 import importlib.util
 import os
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -42,6 +43,12 @@ RETRY_DELAY = float(os.environ.get("IPH_RETRY_DELAY", "0.3"))
 
 _cached_sock = None
 _cached_token = None
+# The cached socket is module-global. The `mobile-use --headed` ViewerServer is
+# a ThreadingMixIn server whose handlers call screen_stream_frame() (→ _send)
+# from multiple threads, so the connect/request/drop sequence must be serialized
+# or two threads corrupt each other's framing on the shared socket. Reentrant so
+# the retry path (which re-enters _send) doesn't self-deadlock.
+_conn_lock = threading.RLock()
 
 
 def _get_conn(timeout=5.0):
@@ -73,23 +80,28 @@ def _send(req, timeout=120.0, _retries=None):
     with a 3-line remediation pointing at `--doctor` and `--reload`."""
     if _retries is None:
         _retries = MAX_RETRIES
-    try:
-        c, token = _get_conn(timeout=min(timeout, 5.0))
-        c.settimeout(timeout)
-        r = ipc.request(c, token, req)
-    except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
-        _drop_conn()
-        if _retries > 0:
-            time.sleep(RETRY_DELAY * (2 ** (MAX_RETRIES - _retries)))
-            from .admin import ensure_daemon
-            ensure_daemon()
-            return _send(req, timeout=timeout, _retries=_retries - 1)
-        raise RuntimeError(
-            f"iphone-harness daemon unreachable after {MAX_RETRIES} retries.\n"
-            f"  Underlying error: {e}\n"
-            f"  Likely causes: Appium not running, IPH_UDID unset/wrong, WDA not trusted on device.\n"
-            f"  Run `iphone-harness --doctor` to diagnose, then `iphone-harness --reload`."
-        )
+    with _conn_lock:
+        try:
+            c, token = _get_conn(timeout=min(timeout, 5.0))
+            c.settimeout(timeout)
+            r = ipc.request(c, token, req)
+        except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
+            _drop_conn()
+            if _retries > 0:
+                time.sleep(RETRY_DELAY * (2 ** (MAX_RETRIES - _retries)))
+                from .admin import ensure_daemon
+                ensure_daemon()
+                return _send(req, timeout=timeout, _retries=_retries - 1)
+            raise RuntimeError(
+                f"iphone-harness daemon unreachable after {MAX_RETRIES} retries.\n"
+                f"  Underlying error: {e}\n"
+                f"  Likely causes: Appium not running, IPH_UDID unset/wrong, WDA not trusted on device.\n"
+                f"  Run `iphone-harness --doctor` to diagnose, then `iphone-harness --reload`."
+            )
+        return _check_send_result(r, req, timeout, _retries)
+
+
+def _check_send_result(r, req, timeout, _retries):
     if isinstance(r, dict) and "error" in r:
         err = r["error"]
         if "stale" in err.lower() or "session" in err.lower():

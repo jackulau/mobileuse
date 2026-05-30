@@ -7,6 +7,7 @@ Same architecture as iphone_harness/daemon.py:
   - auto-recovers from stale sessions
 """
 import asyncio
+import concurrent.futures
 import json
 import os
 import sys
@@ -92,6 +93,12 @@ class Daemon:
         self.driver = None
         self.stop = None
         self._loop = None
+        # SINGLE driver worker — the selenium/Appium session is not thread-safe
+        # and the screen-stream task + IPC handlers both call _drive. A
+        # multi-worker default pool would race them; serialize onto one thread.
+        self._exec = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="anh-driver"
+        )
         # Screen-stream state — populated by screen_stream_start RPC.
         self._stream_task = None
         self._stream_frame = None
@@ -101,7 +108,8 @@ class Daemon:
         self._stream_max_dim = 800
 
     async def _drive(self, fn):
-        return await self._loop.run_in_executor(None, fn)
+        """Run a blocking driver callable on the single driver worker (serialized)."""
+        return await self._loop.run_in_executor(self._exec, fn)
 
     async def _connect(self):
         from appium import webdriver
