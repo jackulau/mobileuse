@@ -610,9 +610,12 @@ def long_press(x, y, duration=1.0):
 
 def swipe(x1, y1, x2, y2, duration=0.4):
     """Swipe from (x1, y1) to (x2, y2). Uses UIAutomator2's drag gesture."""
+    # Floor at 1: a zero-distance (degenerate) swipe would otherwise compute
+    # speed=0, which UIAutomator2's dragGesture treats as a no-op. Real swipes
+    # (distance/duration >= 1) are unaffected.
+    speed = max(1, int(abs(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5) / max(duration, 0.01)))
     appium("mobile: dragGesture",
-           startX=x1, startY=y1, endX=x2, endY=y2,
-           speed=int(abs(((x2-x1)**2 + (y2-y1)**2)**0.5) / max(duration, 0.01)))
+           startX=x1, startY=y1, endX=x2, endY=y2, speed=speed)
 
 
 def scroll(direction="down"):
