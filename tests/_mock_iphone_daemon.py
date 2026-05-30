@@ -55,6 +55,10 @@ class MockDaemon:
             return {"result": {"path": "/tmp/iph-mock-shot.png", "bytes": 0}}
         if method == "window_size":
             return {"result": {"width": 390, "height": 844}}
+        if method == "get_orientation":
+            return {"result": "PORTRAIT"}
+        if method == "set_orientation":
+            return {"result": (req.get("params") or {}).get("orientation", "PORTRAIT").upper()}
         if method == "page_source":
             return {"result": "<XCUIElementTypeApplication name='SpringBoard'/>"}
         if method == "click_element":

@@ -756,6 +756,52 @@ def is_app_installed(bundle_id):
         return False
 
 
+# ---- device control --------------------------------------------------------
+
+def open_url(url, bundle_id="com.apple.mobilesafari"):
+    """Open a URL or deep link. http(s) URLs open in Safari by default; pass
+    bundle_id to deep-link into a specific app's custom scheme.
+
+        open_url("https://example.com")
+        open_url("myapp://path", bundle_id="com.example.myapp")
+    """
+    return appium("mobile: deepLink", url=url, bundleId=bundle_id)
+
+
+def get_clipboard():
+    """Read the device pasteboard as text. (Real-device support is limited —
+    XCUITest pasteboard access is reliable on the Simulator.)"""
+    raw = appium("mobile: getPasteboard", contentType="plaintext")
+    if not raw:
+        return ""
+    try:
+        return _base64.b64decode(raw).decode("utf-8", "replace")
+    except Exception:
+        return raw
+
+
+def set_clipboard(text):
+    """Write text to the device pasteboard. NOTE: `mobile: setPasteboard` is
+    unavailable on real iOS devices (Simulator only)."""
+    content = _base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return appium("mobile: setPasteboard", content=content, contentType="plaintext")
+
+
+def set_location(latitude, longitude):
+    """Set the simulated GPS location. (Simulator / limited real-device support.)"""
+    return appium("mobile: setSimulatedLocation", latitude=latitude, longitude=longitude)
+
+
+def get_orientation():
+    """Current device orientation: 'PORTRAIT' or 'LANDSCAPE'."""
+    return _send({"method": "get_orientation", "params": {}})["result"]
+
+
+def set_orientation(orientation):
+    """Rotate the device. orientation: 'PORTRAIT' or 'LANDSCAPE'."""
+    return _send({"method": "set_orientation", "params": {"orientation": orientation}})["result"]
+
+
 def domain_skills(bundle_id):
     """List skill .md filenames for this bundle id, when IPH_DOMAIN_SKILLS=1.
 

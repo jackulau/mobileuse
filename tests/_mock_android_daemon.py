@@ -48,6 +48,10 @@ class MockDaemon:
             return {"result": {"set": req.get("params", {}).get("value", ""), "matched": 1}}
         if method == "active_app":
             return {"result": {"packageName": "com.android.launcher"}}
+        if method == "get_orientation":
+            return {"result": "PORTRAIT"}
+        if method == "set_orientation":
+            return {"result": (req.get("params") or {}).get("orientation", "PORTRAIT").upper()}
         # Screen stream — synthetic JPEG stub.
         if method == "screen_stream_start":
             params = req.get("params") or {}

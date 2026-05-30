@@ -414,9 +414,25 @@ async def _m_set_value(d, params):
     return await d._drive(_do)
 
 
+async def _m_get_orientation(d, params):
+    """Device orientation as 'PORTRAIT' or 'LANDSCAPE' (W3C orientation endpoint)."""
+    return await d._drive(lambda: d.driver.orientation)
+
+
+async def _m_set_orientation(d, params):
+    """Rotate the device. params: {orientation: 'PORTRAIT'|'LANDSCAPE'}."""
+    o = (params.get("orientation") or "PORTRAIT").upper()
+    def _set():
+        d.driver.orientation = o
+        return d.driver.orientation
+    return await d._drive(_set)
+
+
 _DISPATCH = {
     # Generic XCUITest escape hatch — covers everything `mobile: ...` exposes.
     "appium":         _m_appium,
+    "get_orientation": _m_get_orientation,
+    "set_orientation": _m_set_orientation,
     # Perception (need raw bytes / parsed XML, not just JSON).
     "screenshot":     _m_screenshot,
     "page_source":    _m_page_source,

@@ -449,6 +449,50 @@ def is_app_installed(package):
     return bool(appium("mobile: isAppInstalled", appId=package))
 
 
+# ---- device control --------------------------------------------------------
+
+def open_url(url):
+    """Open a URL or deep link (ACTION_VIEW). Launches the registered handler
+    app, or the browser for http(s).
+
+        open_url("https://example.com")
+        open_url("geo:37.4,-122.0")
+    """
+    return appium("mobile: deepLink", url=url)
+
+
+def get_clipboard():
+    """Read the device clipboard as text."""
+    raw = appium("mobile: getClipboard")
+    if not raw:
+        return ""
+    try:
+        return _base64.b64decode(raw).decode("utf-8", "replace")
+    except Exception:
+        return raw
+
+
+def set_clipboard(text):
+    """Write text to the device clipboard."""
+    content = _base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return appium("mobile: setClipboard", content=content, contentType="plaintext")
+
+
+def set_location(latitude, longitude, altitude=0.0):
+    """Set the mocked GPS location."""
+    return appium("mobile: setGeolocation", latitude=latitude, longitude=longitude, altitude=altitude)
+
+
+def get_orientation():
+    """Current device orientation: 'PORTRAIT' or 'LANDSCAPE'."""
+    return _send({"method": "get_orientation", "params": {}})["result"]
+
+
+def set_orientation(orientation):
+    """Rotate the device. orientation: 'PORTRAIT' or 'LANDSCAPE'."""
+    return _send({"method": "set_orientation", "params": {"orientation": orientation}})["result"]
+
+
 def domain_skills(package):
     """List skill .md filenames for this package, when ANH_DOMAIN_SKILLS=1."""
     if os.environ.get("ANH_DOMAIN_SKILLS") != "1":
