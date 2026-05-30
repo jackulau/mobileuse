@@ -77,11 +77,27 @@ def _check_env_for_platform(platform):
     key = "IPH_UDID" if platform == "ios" else "ANH_UDID"
     if os.environ.get(key, "").strip():
         return None
-    # Only check .env in the current working directory. Auto-discovering one
-    # from the install location would silently use the developer's .env in
-    # anyone else's process — and is what made test_e2e_minus_c... fail.
+    # A .env in the current working directory is honored (project-local config).
     if os.path.exists(os.path.join(os.getcwd(), ".env")):
         return None
+    # Also accept a properly-filled .env at the repo root / agent-workspace —
+    # that's where `mobile-use init` writes it and where the daemon loads it from,
+    # so `-c` / `--reload` work from any cwd once init has run. _check_env_file
+    # validates the REQUIRED keys are actually filled (not placeholders/blank), so
+    # the "foreign cwd with no real config" error path stays intact.
+    # Set MOBILE_USE_NO_REPO_ENV=1 to demand strict cwd/env config (CI/sandboxes
+    # that must not pick up a developer's install-location .env).
+    if os.environ.get("MOBILE_USE_NO_REPO_ENV") != "1":
+        try:
+            if platform == "ios":
+                from iphone_harness.admin import _check_env_file
+            else:
+                from android_harness.admin import _check_env_file
+            ok, _detail = _check_env_file()
+            if ok:
+                return None
+        except Exception:
+            pass
     return (
         f"No .env file found and {key} not set in environment.\n"
         f"   Fix: run `mobile-use init` (auto-fills from connected device).\n"
@@ -230,6 +246,24 @@ def _doctor_both():
         android_rc = 1
 
     return max(ios_rc, android_rc)
+
+
+def _reload_both():
+    """Best-effort nuke of BOTH daemons (iOS + Android). Backs the bare
+    `mobile-use --reload` recovery command when no platform is selected/detected.
+    restart_daemon() only kills + cleans up stale state, so this needs no device.
+    """
+    did = []
+    for label, mod in (("iOS", "iphone_harness.admin"), ("Android", "android_harness.admin")):
+        try:
+            admin = __import__(mod, fromlist=["restart_daemon"])
+            admin.restart_daemon()
+            did.append(label)
+            print(f"[mobile-use] {label} daemon stopped — will respawn on next call")
+        except Exception as e:
+            print(f"[mobile-use] {label} daemon reload skipped: {e}", file=sys.stderr)
+    if not did:
+        print("[mobile-use] no daemons reloaded")
 
 
 HELP = """mobile-use — direct mobile device control via Appium
@@ -457,6 +491,12 @@ def main():
 
     # Auto-detect platform if not specified
     if platform is None:
+        # `mobile-use --reload` with no platform/device must still nuke daemons —
+        # that is the stale-state recovery command, and the no-device case is
+        # exactly when you need it. Don't fall through to the auto-detect gate.
+        if "--reload" in remaining:
+            _reload_both()
+            return
         platform = _detect_platform()
         if platform is None:
             if remaining and remaining[0] == "--doctor":

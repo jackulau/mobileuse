@@ -196,11 +196,16 @@ def test_check_env_passes_when_udid_in_env(monkeypatch):
 
 
 def test_check_env_returns_message_when_no_env_no_var(monkeypatch, tmp_path):
+    import iphone_harness.admin as ia
     from mobile_use import cli
     monkeypatch.delenv("IPH_UDID", raising=False)
     monkeypatch.delenv("ANH_UDID", raising=False)
     # Point os.path to a tmp dir that has no .env
     monkeypatch.setattr(cli.os.path, "exists", lambda p: False)
+    # Also stub the repo-root .env check so this is independent of the dev
+    # machine's real .env (the preflight now accepts a filled repo/agent-workspace
+    # .env, so the error path must be isolated from it).
+    monkeypatch.setattr(ia, "_check_env_file", lambda: (False, "no real config"))
     msg = cli._check_env_for_platform("ios")
     assert msg is not None
     assert "mobile-use init" in msg
@@ -208,9 +213,11 @@ def test_check_env_returns_message_when_no_env_no_var(monkeypatch, tmp_path):
 
 
 def test_check_env_android_variant(monkeypatch):
+    import android_harness.admin as aa
     from mobile_use import cli
     monkeypatch.delenv("ANH_UDID", raising=False)
     monkeypatch.setattr(cli.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(aa, "_check_env_file", lambda: (False, "no real config"))
     msg = cli._check_env_for_platform("android")
     assert msg is not None
     assert "ANH_UDID" in msg

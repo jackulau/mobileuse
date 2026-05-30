@@ -281,7 +281,10 @@ def test_e2e_minus_c_surfaces_env_error_when_no_env_no_udid(tmp_path):
         "PYTHONPATH": str(REPO_ROOT),
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
-        # IPH_UDID intentionally NOT set
+        # IPH_UDID intentionally NOT set.
+        # Demand strict cwd/env config so the preflight ignores the developer's
+        # filled repo .env (this is a dev machine with a real device + .env).
+        "MOBILE_USE_NO_REPO_ENV": "1",
     }
     result = subprocess.run(
         [sys.executable, "-m", "mobile_use.cli", "--ios", "-c", "print(1)"],
