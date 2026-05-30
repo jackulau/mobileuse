@@ -61,8 +61,12 @@ class Session:
     def action_history(self):
         return self._state.get("action_history", [])
 
-    def record_action(self, action, result=None, error=None):
-        """Record an action taken by the agent."""
+    def record_action(self, action, result=None, error=None, success=None):
+        """Record an action taken by the agent.
+
+        success: optional verification outcome (True/False) when the caller
+        re-perceived to confirm the action took effect. None = unverified.
+        """
         entry = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "action": action,
@@ -72,6 +76,8 @@ class Session:
             entry["result"] = str(result)[:500]
         if error is not None:
             entry["error"] = str(error)[:500]
+        if success is not None:
+            entry["success"] = bool(success)
         self._state["action_history"].append(entry)
         max_h = self._state.get("max_history", 200)
         if len(self._state["action_history"]) > max_h:

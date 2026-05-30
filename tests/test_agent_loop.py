@@ -44,8 +44,24 @@ def _make_fake_helpers(name="ios"):
         calls.append(("tap", el))
         return True
 
+    def tap_at_xy(x, y):
+        calls.append(("tap_at_xy", x, y))
+        return True
+
+    def type_text(text):
+        calls.append(("type_text", text))
+        return True
+
+    def press_enter():
+        calls.append(("press_enter",))
+        return True
+
     def press_back():
         calls.append(("press_back",))
+        return True
+
+    def swipe_back():
+        calls.append(("swipe_back",))
         return True
 
     def appium(script, **kw):
@@ -57,7 +73,8 @@ def _make_fake_helpers(name="ios"):
         return {"x": 100, "y": 200}
 
     for fn in (screenshot, ui_tree, active_app, window_size, alert,
-               auto_dismiss_dialog, tap, press_back, appium, find):
+               auto_dismiss_dialog, tap, tap_at_xy, type_text, press_enter,
+               press_back, swipe_back, appium, find):
         setattr(m, fn.__name__, fn)
 
     m._calls = calls
@@ -240,10 +257,14 @@ def test_get_available_actions_lists_helpers(tmp_path, monkeypatch):
     from mobile_use.agent_loop import AgentLoop
     loop = AgentLoop(platform="ios", session_name="actions", collect=False)
     actions = loop.get_available_actions()
+    # Curated action schema: verbs present, with signature + doc.
     assert "tap" in actions
-    assert "screenshot" in actions
-    assert "ui_tree" in actions
-    # private helpers excluded
+    assert "signature" in actions["tap"] and "doc" in actions["tap"]
+    # Observation / plumbing functions must NOT be exposed as actions.
+    assert "screenshot" not in actions
+    assert "ui_tree" not in actions
+    assert "appium" not in actions
+    assert "find" not in actions
     assert not any(a.startswith("_") for a in actions)
 
 
