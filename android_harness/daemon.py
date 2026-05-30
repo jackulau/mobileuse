@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -148,6 +149,14 @@ class Daemon:
     async def start(self):
         self.stop = asyncio.Event()
         self._loop = asyncio.get_running_loop()
+        # Drive SIGTERM/SIGINT through the same graceful stop path as
+        # meta:shutdown so an external kill / `--reload` quits the UIAutomator2
+        # session instead of orphaning it. Guarded for Windows.
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                self._loop.add_signal_handler(sig, self.stop.set)
+            except (NotImplementedError, RuntimeError, ValueError):
+                pass
         await self._connect()
 
     async def handle(self, req):
@@ -424,6 +433,15 @@ async def serve(d):
             except (asyncio.CancelledError, Exception):
                 pass
         ipc.cleanup_endpoint(NAME)
+        # Quit the WebDriver session so we don't orphan the UIAutomator2 session
+        # on the device — Appium otherwise only reaps it after newCommandTimeout.
+        if d.driver is not None:
+            try:
+                await d._drive(d.driver.quit)
+            except Exception as e:
+                log(f"driver.quit on shutdown: {e}")
+            d.driver = None
+        d._exec.shutdown(wait=False)
 
 
 async def main():
