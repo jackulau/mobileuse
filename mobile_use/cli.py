@@ -483,10 +483,13 @@ def main():
     if remaining and remaining[0] == "agent":
         try:
             from mobile_use.agent_loop import run_agent
-            run_agent(platform=platform or _detect_platform(), args=remaining[1:])
-        except ImportError:
-            print("Agent loop not yet implemented. Use -c for one-shot scripts.")
+        except ImportError as e:
+            # run_agent IS implemented — an ImportError here means a broken
+            # install / missing dep, so surface the real cause, not a false claim.
+            print(f"Could not load the agent loop: {e}. Reinstall with `pip install -e .`",
+                  file=sys.stderr)
             sys.exit(1)
+        run_agent(platform=platform or _detect_platform(), args=remaining[1:])
         return
 
     # Auto-detect platform if not specified

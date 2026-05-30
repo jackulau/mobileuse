@@ -55,6 +55,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install ruff
-      - run: ruff check mobile_use iphone_harness android_harness || true
-        # ruff currently advisory — surfaces warnings without blocking merge.
-        # Tighten after the codebase is fully ruff-clean.
+      # Blocking: the tree is ruff-clean (goal/014), so a lint regression —
+      # including a real F-category undefined-name bug — now fails the job
+      # instead of passing silently. Covers tests/ too.
+      - run: ruff check mobile_use iphone_harness android_harness tests
