@@ -151,7 +151,14 @@ def request(c, token, req):
             raise RuntimeError(
                 f"IPC response exceeded {_MAX_MSG // (1024*1024)}MB cap — daemon malfunction?"
             )
-    return json.loads(data or b"{}")
+    if not data.endswith(b"\n"):
+        # Peer closed before delivering a complete newline-framed response —
+        # an empty buffer or a truncated write (flaky link / daemon died mid-reply).
+        # Raise a reconnectable ConnectionError (an OSError subclass) so _send drops
+        # the socket and retries, instead of leaking a raw JSONDecodeError to the
+        # agent or silently parsing an empty buffer as {}.
+        raise ConnectionError("IPC connection closed mid-frame")
+    return json.loads(data)
 
 
 def ping(name, timeout=1.0):
