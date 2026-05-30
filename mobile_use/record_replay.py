@@ -491,48 +491,52 @@ def replay_smart(script_path, helpers, llm=None, on_failure="raise"):
 
         outcome = "literal"
         adapted = None
-        if intent and recorded_fp is not None:
+        needs_retarget = bool(intent) and recorded_fp is not None
+        if needs_retarget and llm is None:
+            # Smart replay requested but no llm provided: re-targeting is
+            # impossible, so the recorded call runs literally either way. Skip the
+            # _ui_fingerprint probe (active_app + ui_tree = 2 device round-trips
+            # per annotated step) entirely — it would only gate a stderr warning.
+            sys.stderr.write(
+                f"[record_replay] step {i} ({fn_name}): no llm provided — literal "
+                f"replay (skipping UI fingerprint probe)\n"
+            )
+        elif needs_retarget:  # llm is not None
             try:
                 current_fp = _ui_fingerprint(helpers)
             except Exception:
                 current_fp = {"app": "", "labels": [], "focused": None, "count": 0}
 
             if not _fingerprint_matches(recorded_fp, current_fp):
-                if llm is None:
-                    sys.stderr.write(
-                        f"[record_replay] step {i} ({fn_name}): UI fingerprint diverged "
-                        f"but no llm provided — falling back to literal replay\n"
+                try:
+                    current_ui = helpers.ui_tree(visible_only=True) \
+                        if hasattr(helpers, "ui_tree") else []
+                except Exception:
+                    current_ui = []
+                adapted = agent_loop.retarget_action(
+                    intent, recorded_fp, current_ui,
+                    {"fn": fn_name, "args": args, "kwargs": kwargs},
+                    llm=llm,
+                    current_app=current_fp.get("app"),
+                    current_focused=current_fp.get("focused"),
+                )
+                if adapted is None:
+                    err = MacroStepFailed(
+                        i, intent, fn_name,
+                        "LLM declined to re-target or returned no adapted action",
+                        fingerprint=recorded_fp,
                     )
-                else:
-                    try:
-                        current_ui = helpers.ui_tree(visible_only=True) \
-                            if hasattr(helpers, "ui_tree") else []
-                    except Exception:
-                        current_ui = []
-                    adapted = agent_loop.retarget_action(
-                        intent, recorded_fp, current_ui,
-                        {"fn": fn_name, "args": args, "kwargs": kwargs},
-                        llm=llm,
-                        current_app=current_fp.get("app"),
-                        current_focused=current_fp.get("focused"),
-                    )
-                    if adapted is None:
-                        err = MacroStepFailed(
-                            i, intent, fn_name,
-                            "LLM declined to re-target or returned no adapted action",
-                            fingerprint=recorded_fp,
-                        )
-                        if on_failure == "raise":
-                            raise err
-                        results.append({
-                            "step": i, "fn": fn_name, "intent": intent,
-                            "outcome": "skipped", "error": str(err),
-                        })
-                        continue
-                    fn_name = adapted["fn"]
-                    args = adapted["args"]
-                    kwargs = adapted["kwargs"]
-                    outcome = "retargeted"
+                    if on_failure == "raise":
+                        raise err
+                    results.append({
+                        "step": i, "fn": fn_name, "intent": intent,
+                        "outcome": "skipped", "error": str(err),
+                    })
+                    continue
+                fn_name = adapted["fn"]
+                args = adapted["args"]
+                kwargs = adapted["kwargs"]
+                outcome = "retargeted"
 
         fn = getattr(helpers, fn_name, None)
         if fn is None or not callable(fn):

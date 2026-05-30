@@ -237,23 +237,35 @@ def test_replay_smart_literal_when_fingerprint_matches(tmp_path):
     assert fresh._calls == [("tap_at_xy", (10, 20), {})]
 
 
-def test_replay_smart_warns_when_mismatch_without_llm(tmp_path, capsys):
-    """Fingerprint diverged + no llm → warn to stderr, run literal fallback."""
+def test_replay_smart_no_llm_skips_probe_and_runs_literal(tmp_path, capsys):
+    """No llm on an annotated step → warn + literal replay, WITHOUT probing the
+    UI fingerprint (the probe is pure waste when re-targeting is impossible)."""
     out = _record_smart_macro(tmp_path, [
         ("open compose", [{"type": "Button", "label": "Compose"}],
          lambda h: h.tap_at_xy(10, 20)),
     ])
 
     fresh = _fake_helpers()
-    fresh.active_app = lambda: "com.test.smart"
-    fresh.ui_tree = lambda visible_only=False, compact=False: [
-        {"type": "Button", "label": "Completely Different"},
-    ]
+    probe_calls = {"active_app": 0, "ui_tree": 0}
+
+    def _active_app():
+        probe_calls["active_app"] += 1
+        return "com.test.smart"
+
+    def _ui_tree(visible_only=False, compact=False):
+        probe_calls["ui_tree"] += 1
+        return [{"type": "Button", "label": "Completely Different"}]
+
+    fresh.active_app = _active_app
+    fresh.ui_tree = _ui_tree
     results = record_replay.replay_smart(out, fresh, llm=None)
     captured = capsys.readouterr()
-    assert "diverged" in captured.err
+    assert "no llm" in captured.err.lower()
     assert len(results) == 1
     assert results[0]["outcome"] == "literal"
+    # The wasted fingerprint probe must NOT have run.
+    assert probe_calls["active_app"] == 0 and probe_calls["ui_tree"] == 0
+    assert fresh._calls == [("tap_at_xy", (10, 20), {})]
 
 
 def test_replay_smart_retargets_via_llm_on_mismatch(tmp_path):
