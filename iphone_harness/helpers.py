@@ -1049,35 +1049,63 @@ def alert_dismiss():
     appium("mobile: alert", action="dismiss")
 
 
+def _tap_alert_button(label):
+    """Tap a specific system-alert button by its exact label.
+
+    XCUITest's `mobile: alert` taps the named button when given buttonLabel —
+    this is how we hit the button we actually matched instead of relying on
+    Appium's accept/dismiss heuristic (which on a [Don't Allow, Allow] permission
+    sheet would tap the wrong one). Falls back to the cancel heuristic.
+    """
+    try:
+        appium("mobile: alert", action="accept", buttonLabel=label)
+    except Exception:
+        try:
+            appium("mobile: alert", action="dismiss")
+        except Exception:
+            pass
+
+
 def auto_dismiss_dialog():
     """Dismiss any unexpected system dialog (permissions, updates, alerts).
 
-    Call this before critical actions to clear the path. Returns True if
-    a dialog was dismissed, False if screen was clean.
+    Call this before critical actions to clear the path. Returns True if a
+    dialog was dismissed, False if the screen was clean. It NEVER blindly grants
+    a permission it meant to deny: with an unrecognized multi-button alert it
+    taps the implicit deny (first non-grant button), and if every button looks
+    like a grant it leaves the dialog rather than accepting.
     """
     a = alert()
     if a is None:
         return False
     buttons = a if isinstance(a, list) else a.get("buttons", [])
+    if not buttons:
+        return False
+    # "OK" removed — it is an ACCEPT word, not a dismiss; treating it as a cancel
+    # confirmed actions the caller meant to back out of.
     dismiss_labels = {"Don't Allow", "Cancel", "Not Now", "Later", "Close",
-                      "Dismiss", "No Thanks", "Remind Me Later", "OK"}
+                      "Dismiss", "No Thanks", "No", "Remind Me Later"}
+    grant_labels = {"Allow", "Allow While Using App", "Allow Once",
+                    "Always Allow", "Yes", "OK"}
+    # Prefer an explicit dismiss/deny button — tap that specific label.
     for btn in buttons:
         if btn in dismiss_labels:
-            try:
-                appium("mobile: alert", action="dismiss")
-            except Exception:
-                try:
-                    appium("mobile: alert", action="accept")
-                except Exception:
-                    pass
+            _tap_alert_button(btn)
             wait(0.5)
             return True
-    try:
-        appium("mobile: alert", action="accept")
+    # A single-button alert is informational — tapping it just dismisses.
+    if len(buttons) == 1:
+        _tap_alert_button(buttons[0])
         wait(0.5)
         return True
-    except Exception:
-        return False
+    # Multiple buttons, none a known dismiss: tap the first NON-grant button
+    # (the implicit deny). If every button is a grant, do not silently accept.
+    non_grant = [b for b in buttons if b not in grant_labels]
+    if non_grant:
+        _tap_alert_button(non_grant[0])
+        wait(0.5)
+        return True
+    return False
 
 
 # ---- control center --------------------------------------------------------

@@ -655,23 +655,56 @@ def alert():
     return None
 
 
+def _match_dialog_button(labels):
+    """Find a dialog button by visible label across modern widget classes.
+
+    Matches any clickable element whose text or content-desc is in `labels` —
+    NOT just the legacy android.widget.Button. Modern apps render dialog buttons
+    as MaterialButton / AppCompatButton / Jetpack Compose nodes (no Button
+    class), and the Android 13+ permission sheet is a Material dialog; requiring
+    an exact android.widget.Button class silently missed all of those. Prefers
+    clickable+enabled nodes, then falls back to any matching label so a Compose
+    node whose clickable flag sits on an ancestor is still reachable.
+    """
+    candidates = ui_tree(visible_only=True)
+    for require_clickable in (True, False):
+        for el in candidates:
+            if el.get("enabled") is False:
+                continue
+            if require_clickable and not el.get("clickable"):
+                continue
+            text = (el.get("text") or "").strip()
+            desc = (el.get("content_desc") or "").strip()
+            if text in labels or desc in labels:
+                return el
+    return None
+
+
+_ACCEPT_LABELS = {"OK", "Ok", "ALLOW", "Allow", "YES", "Yes", "ACCEPT", "Accept",
+                  "GOT IT", "Got it", "CONTINUE", "Continue",
+                  "While using the app", "Only this time",
+                  "Allow only while using the app", "ALLOW ONLY WHILE USING THE APP"}
+_DISMISS_LABELS = {"CANCEL", "Cancel", "DENY", "Deny", "NO", "No", "NOT NOW", "Not Now",
+                   "LATER", "Later", "NO THANKS", "No Thanks", "No thanks",
+                   "DISMISS", "Dismiss", "SKIP", "Skip", "CLOSE", "Close",
+                   "Don't allow", "DON'T ALLOW"}
+
+
 def alert_accept():
     """Tap the positive button (OK, Allow, Yes) on a visible dialog."""
-    for label in ("OK", "ALLOW", "Allow", "YES", "Yes", "ACCEPT", "Accept", "GOT IT", "Got it"):
-        btn = find(text=label, type="android.widget.Button")
-        if btn:
-            tap(btn)
-            return
+    btn = _match_dialog_button(_ACCEPT_LABELS)
+    if btn:
+        tap(btn)
+        return
     raise RuntimeError("No accept button found in current dialog")
 
 
 def alert_dismiss():
     """Tap the negative button (Cancel, Deny, No) on a visible dialog."""
-    for label in ("CANCEL", "Cancel", "DENY", "Deny", "NO", "No", "DISMISS", "Dismiss"):
-        btn = find(text=label, type="android.widget.Button")
-        if btn:
-            tap(btn)
-            return
+    btn = _match_dialog_button(_DISMISS_LABELS)
+    if btn:
+        tap(btn)
+        return
     press_back()
 
 
@@ -679,25 +712,19 @@ def auto_dismiss_dialog():
     """Dismiss any unexpected dialog (permissions, updates, system alerts).
 
     Call this before critical actions to clear the path. Returns True if
-    a dialog was dismissed, False if screen was clean.
+    a dialog was dismissed, False if screen was clean. Prefers a dismiss/deny
+    button over accept so an unexpected permission prompt is not granted.
     """
-    dismiss_labels = {"CANCEL", "Cancel", "NOT NOW", "Not Now", "LATER", "Later",
-                      "NO THANKS", "No Thanks", "No thanks", "DENY", "Deny",
-                      "DISMISS", "Dismiss", "SKIP", "Skip", "CLOSE", "Close"}
-    accept_labels = {"OK", "ALLOW", "Allow", "GOT IT", "Got it",
-                     "ACCEPT", "Accept", "CONTINUE", "Continue",
-                     "While using the app"}
-    for el in ui_tree(visible_only=True):
-        if el["type"] != "android.widget.Button":
-            continue
-        if el["text"] in dismiss_labels:
-            tap(el)
-            wait(0.5)
-            return True
-        if el["text"] in accept_labels:
-            tap(el)
-            wait(0.5)
-            return True
+    btn = _match_dialog_button(_DISMISS_LABELS)
+    if btn:
+        tap(btn)
+        wait(0.5)
+        return True
+    btn = _match_dialog_button(_ACCEPT_LABELS)
+    if btn:
+        tap(btn)
+        wait(0.5)
+        return True
     return False
 
 
