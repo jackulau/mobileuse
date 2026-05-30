@@ -593,8 +593,11 @@ def scroll_by(dy=-400, x=None, y=None):
 def type_text(text):
     """Type into the currently-focused text input.
 
-    Uses the focused element's send_keys — works with UIAutomator2's built-in
-    keyboard injection. For long text or Unicode, prefer set_value().
+    Uses the focused element's send_keys via UIAutomator2's keyboard injection.
+    Unicode (emoji/accented/CJK) relies on the session-level unicodeKeyboard
+    capability (set in the daemon) — set_value() uses the SAME send_keys path and
+    offers no Unicode advantage, so don't reach for it expecting different
+    behavior. Use press_enter() after typing to submit a search/login field.
     """
     focused = 'new UiSelector().focused(true)'
     send_keys(focused, text)

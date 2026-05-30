@@ -86,6 +86,12 @@ def _build_options():
     o.set_capability("appium:newCommandTimeout", NEW_COMMAND_TIMEOUT)
     o.set_capability("appium:autoGrantPermissions", True)
     o.set_capability("appium:noReset", True)
+    # Install Appium's Unicode IME so type_text/set_value can inject emoji,
+    # accented, and CJK characters — bare UiAutomator2 send_keys is ASCII-only
+    # and silently drops/mangles the rest. resetKeyboard restores the user's IME
+    # on session teardown.
+    o.set_capability("appium:unicodeKeyboard", True)
+    o.set_capability("appium:resetKeyboard", True)
     return o
 
 
