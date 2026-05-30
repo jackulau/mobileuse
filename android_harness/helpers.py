@@ -593,6 +593,34 @@ def press_recents():
     appium("mobile: pressKey", keycode=187)
 
 
+def key_event(keycode):
+    """Press an arbitrary Android keycode (android.view.KeyEvent.KEYCODE_*).
+
+    Examples: 66 = Enter, 84 = Search, 61 = Tab, 67 = Delete, 111 = Escape.
+    """
+    appium("mobile: pressKey", keycode=int(keycode))
+
+
+def press_enter():
+    """Press Enter (keycode 66) — submits search bars / login forms with no
+    visible submit button. The single most common 'type then submit' flow."""
+    appium("mobile: pressKey", keycode=66)
+
+
+def press_search():
+    """Press the Search action key (keycode 84)."""
+    appium("mobile: pressKey", keycode=84)
+
+
+def hide_keyboard():
+    """Dismiss the on-screen keyboard so it stops occluding Send/Next controls."""
+    try:
+        appium("mobile: hideKeyboard")
+    except Exception:
+        # Back closes the IME on Android when the keyboard is up.
+        press_back()
+
+
 def open_notifications():
     """Pull down the notification shade."""
     appium("mobile: openNotifications")

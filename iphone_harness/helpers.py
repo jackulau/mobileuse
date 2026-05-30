@@ -916,12 +916,45 @@ def scroll_by(dy=-400, x=None, y=None, velocity=1200):
 def type_text(text):
     """Type into the currently-focused text input. Uses XCUITest's `mobile: keys`.
 
+    Embedded newlines are sent as Return key presses (so `type_text("coffee\\n")`
+    submits a search bar / Safari 'Go' / login form) instead of typing a literal
+    '\\n' character, which most fields silently swallow.
+
     Caveats inherited from Appium/XCUITest:
       - Multi-line / paragraph text can be slow; consider `set_value` for long bodies.
       - Some apps swallow individual key events on the first character — call this
         only after confirming a text field is focused (visible keyboard).
     """
-    appium("mobile: keys", keys=list(text))
+    segments = text.split("\n")
+    for i, seg in enumerate(segments):
+        if seg:
+            appium("mobile: keys", keys=list(seg))
+        if i < len(segments) - 1:
+            press_return()
+
+
+def press_return():
+    """Press the keyboard Return/Enter key.
+
+    Submits search bars, Safari 'Go', and login forms that have no visible
+    submit button — the single most common mobile flow. `type_text` cannot do
+    this on its own because `mobile: keys` types a literal newline character.
+    """
+    appium("mobile: keys", keys=[{"key": "XCUIKeyboardKeyReturn"}])
+
+
+def press_enter():
+    """Alias for press_return() — API symmetry with Android's press_enter()."""
+    press_return()
+
+
+def hide_keyboard():
+    """Dismiss the on-screen keyboard so it stops occluding Send/Next controls."""
+    try:
+        appium("mobile: hideKeyboard")
+    except Exception:
+        # Fallback: a Return press dismisses the keyboard in many single-line fields.
+        press_return()
 
 
 def click(predicate, index=0):
