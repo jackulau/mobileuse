@@ -97,6 +97,15 @@ def _detect_platform():
                                                stderr=subprocess.DEVNULL).decode().strip())
         except Exception:
             pass
+    # A booted iOS Simulator counts as a connected iOS target (XCUITest drives it).
+    if not ios and shutil.which("xcrun"):
+        try:
+            out = subprocess.check_output(
+                ["xcrun", "simctl", "list", "devices", "booted", "-j"],
+                timeout=3.0, stderr=subprocess.DEVNULL).decode()
+            ios = '"state" : "Booted"' in out or '"state": "Booted"' in out
+        except Exception:
+            pass
     if not android and shutil.which("adb"):
         try:
             out = subprocess.check_output(["adb", "devices"], timeout=1.5,

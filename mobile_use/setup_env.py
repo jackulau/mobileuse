@@ -37,6 +37,28 @@ def _idevice_id():
         return []
 
 
+def _ios_sim_udids():
+    """Booted iOS Simulator UDIDs (macOS/Xcode only). XCUITest drives a sim by
+    UDID like a real device, so `init` can auto-fill from a Simulator when no
+    physical iPhone is attached. Returns [] off macOS / on any error."""
+    if shutil.which("xcrun") is None:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["xcrun", "simctl", "list", "devices", "booted", "-j"],
+            timeout=5.0, stderr=subprocess.DEVNULL).decode()
+        import json
+        data = json.loads(out)
+    except Exception:
+        return []
+    udids = []
+    for devs in (data.get("devices") or {}).values():
+        for d in devs:
+            if d.get("state") == "Booted" and d.get("udid"):
+                udids.append(d["udid"])
+    return udids
+
+
 def _adb_devices():
     if shutil.which("adb") is None:
         return []
@@ -49,8 +71,16 @@ def _adb_devices():
 
 
 def detect_devices():
-    """Return {'ios': [udids...], 'android': [serials...]}."""
-    return {"ios": _idevice_id(), "android": _adb_devices()}
+    """Return {'ios': [udids...], 'android': [serials...]}.
+
+    iOS includes booted Simulators (after physical devices) so `init` can
+    auto-fill on a Mac with no spare iPhone.
+    """
+    ios = _idevice_id()
+    for udid in _ios_sim_udids():
+        if udid not in ios:
+            ios.append(udid)
+    return {"ios": ios, "android": _adb_devices()}
 
 
 # ---- env file parsing ------------------------------------------------------

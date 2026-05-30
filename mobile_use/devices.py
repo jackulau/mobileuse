@@ -40,6 +40,36 @@ def _ios_udids():
         return []
 
 
+def _ios_sims():
+    """Booted iOS Simulators as [(udid, name)] via `xcrun simctl list ... -j`.
+
+    Physical-device discovery (idevice_id) never returns Simulators, so an Apple
+    Silicon dev with no spare iPhone couldn't get a UDID auto-filled or smoke-test
+    against the standard CI/dev target. XCUITest drives a sim by its UDID exactly
+    like a real device. Returns [] off macOS / without Xcode / on any parse error.
+    """
+    if _which("xcrun") is None:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["xcrun", "simctl", "list", "devices", "booted", "-j"],
+            timeout=5.0, stderr=subprocess.DEVNULL,
+        ).decode()
+    except Exception:
+        return []
+    try:
+        import json
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return []
+    sims = []
+    for runtime_devices in (data.get("devices") or {}).values():
+        for dev in runtime_devices:
+            if dev.get("state") == "Booted" and dev.get("udid"):
+                sims.append((dev["udid"], dev.get("name") or "iOS Simulator"))
+    return sims
+
+
 def _ios_name(udid):
     if _which("idevicename") is None:
         return None
@@ -102,6 +132,13 @@ def discover_connected():
     for i, udid in enumerate(ios_udids, start=1):
         name = _ios_name(udid) or f"ios-{i}"
         out.append({"platform": "ios", "udid": udid, "name": name})
+
+    # Booted iOS Simulators (skip any already reported as physical, just in case).
+    physical = set(ios_udids)
+    for udid, sim_name in _ios_sims():
+        if udid in physical:
+            continue
+        out.append({"platform": "ios", "udid": udid, "name": sim_name, "simulator": True})
 
     for i, (serial, model) in enumerate(_adb_devices_long(), start=1):
         name = model or f"android-{i}"
