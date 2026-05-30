@@ -418,6 +418,37 @@ def active_app():
     return _send({"method": "active_app", "params": {}})["result"]
 
 
+# ---- app lifecycle ---------------------------------------------------------
+
+def launch_app(package):
+    """Launch (or foreground) an app by package id.
+
+        launch_app("com.android.chrome")
+    """
+    return appium("mobile: activateApp", appId=package)
+
+
+def activate_app(package):
+    """Bring an already-running app to the foreground without restarting it."""
+    return appium("mobile: activateApp", appId=package)
+
+
+def terminate_app(package):
+    """Force-stop an app by package id. Returns True if it was running."""
+    return appium("mobile: terminateApp", appId=package)
+
+
+def app_state(package):
+    """App run state as an int: 0 not installed, 1 not running, 2 suspended,
+    3 background, 4 foreground."""
+    return appium("mobile: queryAppState", appId=package)
+
+
+def is_app_installed(package):
+    """True if the app is installed on the device."""
+    return bool(appium("mobile: isAppInstalled", appId=package))
+
+
 def domain_skills(package):
     """List skill .md filenames for this package, when ANH_DOMAIN_SKILLS=1."""
     if os.environ.get("ANH_DOMAIN_SKILLS") != "1":

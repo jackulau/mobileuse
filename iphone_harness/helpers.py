@@ -722,6 +722,40 @@ def active_app():
     return appium("mobile: activeAppInfo")
 
 
+# ---- app lifecycle ---------------------------------------------------------
+
+def launch_app(bundle_id):
+    """Launch (cold-start if needed) an app by bundle id and bring it forward.
+
+        launch_app("com.apple.mobilesafari")
+    """
+    return appium("mobile: launchApp", bundleId=bundle_id)
+
+
+def activate_app(bundle_id):
+    """Bring an already-running app to the foreground without restarting it."""
+    return appium("mobile: activateApp", bundleId=bundle_id)
+
+
+def terminate_app(bundle_id):
+    """Force-quit an app by bundle id. Returns True if it was running."""
+    return appium("mobile: terminateApp", bundleId=bundle_id)
+
+
+def app_state(bundle_id):
+    """App run state as an int: 0 not installed, 1 not running, 2 suspended,
+    3 background, 4 foreground."""
+    return appium("mobile: queryAppState", bundleId=bundle_id)
+
+
+def is_app_installed(bundle_id):
+    """True if the app is installed on the device (queryAppState > 0)."""
+    try:
+        return int(app_state(bundle_id)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def domain_skills(bundle_id):
     """List skill .md filenames for this bundle id, when IPH_DOMAIN_SKILLS=1.
 
