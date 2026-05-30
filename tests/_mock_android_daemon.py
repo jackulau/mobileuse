@@ -89,27 +89,34 @@ class MockDaemon:
 
 async def serve(d):
     async def handler(reader, writer):
+        # Keep-alive loop — mirrors the real daemon so tests exercise socket reuse.
         try:
-            line = await reader.readline()
-            if not line:
-                return
+            while True:
+                try:
+                    line = await reader.readline()
+                except Exception:
+                    break
+                if not line:
+                    break
+                try:
+                    req = json.loads(line)
+                except json.JSONDecodeError as e:
+                    resp = {"error": f"bad json: {e}"}
+                else:
+                    try:
+                        resp = await d.handle(req)
+                    except Exception as e:
+                        resp = {"error": str(e)}
+                try:
+                    writer.write((json.dumps(resp, default=str) + "\n").encode())
+                    await writer.drain()
+                except Exception:
+                    break
+        finally:
             try:
-                req = json.loads(line)
-            except json.JSONDecodeError as e:
-                writer.write((json.dumps({"error": f"bad json: {e}"}) + "\n").encode())
-                await writer.drain()
-                return
-            resp = await d.handle(req)
-            writer.write((json.dumps(resp, default=str) + "\n").encode())
-            await writer.drain()
-        except Exception as e:
-            try:
-                writer.write((json.dumps({"error": str(e)}) + "\n").encode())
-                await writer.drain()
+                writer.close()
             except Exception:
                 pass
-        finally:
-            writer.close()
 
     serve_task = asyncio.create_task(ipc.serve(NAME, handler))
     stop_task = asyncio.create_task(d.stop.wait())

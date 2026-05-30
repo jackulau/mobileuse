@@ -371,22 +371,34 @@ _DISPATCH = {
 
 async def serve(d):
     async def handler(reader, writer):
+        # Keep-alive: serve every request on this connection until the peer
+        # closes (EOF) or the link breaks. The client (helpers._cached_sock)
+        # reuses one socket across calls, so a one-shot handler turned every
+        # steady-state request into a reconnect + RETRY_DELAY sleep.
         try:
-            line = await reader.readline()
-            if not line:
-                return
-            resp = await d.handle(json.loads(line))
-            writer.write((json.dumps(resp, default=str) + "\n").encode())
-            await writer.drain()
-        except Exception as e:
-            log(f"conn: {e}")
+            while True:
+                try:
+                    line = await reader.readline()
+                except Exception as e:
+                    log(f"conn read: {e}")
+                    break
+                if not line:
+                    break  # EOF — peer closed the connection
+                try:
+                    resp = await d.handle(json.loads(line))
+                except Exception as e:
+                    log(f"conn: {e}")
+                    resp = {"error": str(e)}
+                try:
+                    writer.write((json.dumps(resp, default=str) + "\n").encode())
+                    await writer.drain()
+                except Exception:
+                    break  # peer hung up mid-write — stop serving this conn
+        finally:
             try:
-                writer.write((json.dumps({"error": str(e)}) + "\n").encode())
-                await writer.drain()
+                writer.close()
             except Exception:
                 pass
-        finally:
-            writer.close()
 
     serve_task = asyncio.create_task(ipc.serve(NAME, handler))
     stop_task = asyncio.create_task(d.stop.wait())
