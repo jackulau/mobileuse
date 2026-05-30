@@ -466,6 +466,44 @@ async def _m_set_value(d, params):
     return await d._drive(_do)
 
 
+async def _m_snapshot(d, params):
+    """Gather the whole perceive() state — screenshot + page_source + foreground
+    app + window size + alert — in ONE round-trip + ONE driver hop, instead of 5
+    separate RPCs. Each field is isolated so a single failure records an error
+    key but does not abort the rest (mirrors perceive()'s per-field semantics)."""
+    path = params.get("path") or str(ipc._TMP / "iph-shot.png")
+
+    def _gather():
+        res = {}
+        try:
+            png = d.driver.get_screenshot_as_png()
+            with open(path, "wb") as f:
+                f.write(png)
+            res["screenshot"] = {"path": path, "bytes": len(png)}
+        except Exception as e:
+            res["screenshot_error"] = str(e)
+        try:
+            res["page_source"] = d.driver.page_source
+        except Exception as e:
+            res["page_source_error"] = str(e)
+        try:
+            res["active_app"] = d.driver.execute_script("mobile: activeAppInfo", {})
+        except Exception as e:
+            res["active_app_error"] = str(e)
+        try:
+            sz = d.driver.get_window_size()
+            res["window_size"] = {"width": sz["width"], "height": sz["height"]}
+        except Exception as e:
+            res["window_size_error"] = str(e)
+        try:
+            res["alert"] = d.driver.execute_script("mobile: alert", {"action": "getButtons"})
+        except Exception:
+            res["alert"] = None
+        return res
+
+    return await d._drive(_gather)
+
+
 async def _m_get_orientation(d, params):
     """Device orientation as 'PORTRAIT' or 'LANDSCAPE' (W3C orientation endpoint)."""
     return await d._drive(lambda: d.driver.orientation)
@@ -483,6 +521,7 @@ async def _m_set_orientation(d, params):
 _DISPATCH = {
     # Generic XCUITest escape hatch — covers everything `mobile: ...` exposes.
     "appium":         _m_appium,
+    "snapshot":       _m_snapshot,
     "get_orientation": _m_get_orientation,
     "set_orientation": _m_set_orientation,
     # Perception (need raw bytes / parsed XML, not just JSON).

@@ -70,6 +70,20 @@ class AgentLoop:
         self._load_platform()
         h = self._helpers
 
+        # Fast path: one batched snapshot RPC (screenshot+tree+app+size+alert)
+        # instead of 5 separate device round-trips. Falls back to per-call
+        # perception if the daemon is older / the snapshot fails for any reason.
+        if hasattr(h, "snapshot"):
+            try:
+                state = h.snapshot(visible_only=True)
+                if state.get("active_app") is not None:
+                    self.session.current_app = state["active_app"]
+                if self.collector:
+                    self.collector.record_perception(state)
+                return state
+            except Exception:
+                pass  # fall through to the per-call path below
+
         state = {}
         try:
             state["screenshot_path"] = h.screenshot()

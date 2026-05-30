@@ -281,6 +281,85 @@ _tree_cache_time = 0.0
 _TREE_TTL = float(os.environ.get("ANH_TREE_TTL", "1.0"))
 
 
+def _parse_source(xml):
+    """Parse a UIAutomator2 page_source XML string into the flat element list.
+
+    Factored out of ui_tree() so snapshot() can reuse it on the page_source from
+    the batched RPC without a second device round-trip.
+    """
+    root = ET.fromstring(xml)
+    tree = []
+    for el in root.iter():
+        a = el.attrib
+        bounds = a.get("bounds", "")
+        if not bounds:
+            continue
+        try:
+            parts = bounds.replace("][", ",").strip("[]").split(",")
+            x1, y1, x2, y2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+        except (ValueError, IndexError):
+            continue
+        w = x2 - x1
+        h = y2 - y1
+        if w <= 0 or h <= 0:
+            continue
+        tree.append({
+            "type": a.get("class", el.tag),
+            "resource_id": a.get("resource-id", ""),
+            "text": a.get("text", ""),
+            "content_desc": a.get("content-desc", ""),
+            "package": a.get("package", ""),
+            "x": x1, "y": y1, "w": w, "h": h,
+            "cx": x1 + w // 2, "cy": y1 + h // 2,
+            "clickable": a.get("clickable") == "true",
+            "enabled": a.get("enabled") == "true",
+            "focused": a.get("focused") == "true",
+            "visible": a.get("displayed", "true") == "true",
+        })
+    return tree
+
+
+def snapshot(visible_only=True):
+    """One-round-trip device snapshot — screenshot + ui_tree + active_app +
+    window_size + alert in a single daemon RPC instead of four. The page_source
+    is parsed client-side (priming the ui_tree cache), and alert() reuses that
+    cache, so a following find()/alert() in the same step costs zero extra
+    round-trips.
+    """
+    global _tree_cache, _tree_cache_time
+    raw = _send({"method": "snapshot", "params": {}})["result"]
+    state = {}
+    if "screenshot" in raw:
+        state["screenshot_path"] = raw["screenshot"].get("path")
+    if "screenshot_error" in raw:
+        state["screenshot_error"] = raw["screenshot_error"]
+    if raw.get("page_source"):
+        try:
+            tree = _parse_source(raw["page_source"])
+            _tree_cache, _tree_cache_time = tree, time.time()
+            state["ui_tree"] = [el for el in tree if el["visible"]] if visible_only else tree
+        except Exception as e:
+            state["ui_tree_error"] = str(e)
+            state["ui_tree"] = []
+    elif "page_source_error" in raw:
+        state["ui_tree_error"] = raw["page_source_error"]
+        state["ui_tree"] = []
+    if "active_app" in raw:
+        state["active_app"] = raw["active_app"]
+    if "active_app_error" in raw:
+        state["active_app_error"] = raw["active_app_error"]
+    if "window_size" in raw:
+        state["window_size"] = raw["window_size"]
+    if "window_size_error" in raw:
+        state["window_size_error"] = raw["window_size_error"]
+    # Android alert is read from the just-parsed tree (no extra round-trip).
+    try:
+        state["alert"] = alert()
+    except Exception:
+        state["alert"] = None
+    return state
+
+
 def ui_tree(visible_only=False, compact=False):
     """Flat list of UI elements from the current screen.
 
@@ -298,36 +377,7 @@ def ui_tree(visible_only=False, compact=False):
     if _tree_cache is not None and (now - _tree_cache_time) < _TREE_TTL:
         tree = _tree_cache
     else:
-        xml = page_source()
-        root = ET.fromstring(xml)
-        tree = []
-        for el in root.iter():
-            a = el.attrib
-            bounds = a.get("bounds", "")
-            if not bounds:
-                continue
-            try:
-                parts = bounds.replace("][", ",").strip("[]").split(",")
-                x1, y1, x2, y2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-            except (ValueError, IndexError):
-                continue
-            w = x2 - x1
-            h = y2 - y1
-            if w <= 0 or h <= 0:
-                continue
-            tree.append({
-                "type": a.get("class", el.tag),
-                "resource_id": a.get("resource-id", ""),
-                "text": a.get("text", ""),
-                "content_desc": a.get("content-desc", ""),
-                "package": a.get("package", ""),
-                "x": x1, "y": y1, "w": w, "h": h,
-                "cx": x1 + w // 2, "cy": y1 + h // 2,
-                "clickable": a.get("clickable") == "true",
-                "enabled": a.get("enabled") == "true",
-                "focused": a.get("focused") == "true",
-                "visible": a.get("displayed", "true") == "true",
-            })
+        tree = _parse_source(page_source())
         _tree_cache = tree
         _tree_cache_time = now
 

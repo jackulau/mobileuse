@@ -55,6 +55,14 @@ class MockDaemon:
             return {"result": {"path": "/tmp/iph-mock-shot.png", "bytes": 0}}
         if method == "window_size":
             return {"result": {"width": 390, "height": 844}}
+        if method == "snapshot":
+            return {"result": {
+                "screenshot": {"path": "/tmp/iph-mock-shot.png", "bytes": 0},
+                "page_source": "<XCUIElementTypeApplication name='SpringBoard'/>",
+                "active_app": {"bundleId": "com.apple.springboard", "name": "SpringBoard"},
+                "window_size": {"width": 390, "height": 844},
+                "alert": None,
+            }}
         if method == "get_orientation":
             return {"result": "PORTRAIT"}
         if method == "set_orientation":

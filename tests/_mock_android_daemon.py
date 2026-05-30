@@ -48,6 +48,13 @@ class MockDaemon:
             return {"result": {"set": req.get("params", {}).get("value", ""), "matched": 1}}
         if method == "active_app":
             return {"result": {"packageName": "com.android.launcher"}}
+        if method == "snapshot":
+            return {"result": {
+                "screenshot": {"path": "/tmp/anh-mock-shot.png", "bytes": 0},
+                "page_source": "<hierarchy><node class='android.widget.FrameLayout'/></hierarchy>",
+                "active_app": {"package": "com.android.launcher", "activity": ".Launcher"},
+                "window_size": {"width": 1080, "height": 1920},
+            }}
         if method == "get_orientation":
             return {"result": "PORTRAIT"}
         if method == "set_orientation":

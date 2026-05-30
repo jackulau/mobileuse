@@ -584,6 +584,75 @@ _tree_cache_time = 0.0
 _TREE_TTL = float(os.environ.get("IPH_TREE_TTL", "1.0"))
 
 
+def _parse_source(xml):
+    """Parse a WebDriverAgent page_source XML string into the flat element list.
+
+    Factored out of ui_tree() so snapshot() can reuse it on the page_source
+    returned in the batched RPC without a second device round-trip.
+    """
+    root = ET.fromstring(xml)
+    tree = []
+    for el in root.iter():
+        a = el.attrib
+        if "x" not in a or "width" not in a:
+            continue
+        try:
+            x, y = int(a["x"]), int(a["y"])
+            w, h = int(a["width"]), int(a["height"])
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        tree.append({
+            "type": a.get("type", el.tag),
+            "name": a.get("name") or "",
+            "label": a.get("label") or "",
+            "value": a.get("value") or "",
+            "x": x, "y": y, "w": w, "h": h,
+            "cx": x + w // 2, "cy": y + h // 2,
+            "accessible": a.get("accessible") == "true",
+            "visible": a.get("visible") == "true",
+            "traits": a.get("traits") or "",
+        })
+    return tree
+
+
+def snapshot(visible_only=True):
+    """One-round-trip device snapshot — screenshot + ui_tree + active_app +
+    window_size + alert in a single daemon RPC instead of five. The page_source
+    is parsed client-side (priming the ui_tree cache), so a following find()/
+    ui_tree() in the same step costs zero extra round-trips.
+    """
+    global _tree_cache, _tree_cache_time
+    raw = _send({"method": "snapshot", "params": {}})["result"]
+    state = {}
+    if "screenshot" in raw:
+        state["screenshot_path"] = raw["screenshot"].get("path")
+    if "screenshot_error" in raw:
+        state["screenshot_error"] = raw["screenshot_error"]
+    if raw.get("page_source"):
+        try:
+            tree = _parse_source(raw["page_source"])
+            _tree_cache, _tree_cache_time = tree, time.time()
+            state["ui_tree"] = [el for el in tree if el["visible"]] if visible_only else tree
+        except Exception as e:
+            state["ui_tree_error"] = str(e)
+            state["ui_tree"] = []
+    elif "page_source_error" in raw:
+        state["ui_tree_error"] = raw["page_source_error"]
+        state["ui_tree"] = []
+    if "active_app" in raw:
+        state["active_app"] = raw["active_app"]
+    if "active_app_error" in raw:
+        state["active_app_error"] = raw["active_app_error"]
+    if "window_size" in raw:
+        state["window_size"] = raw["window_size"]
+    if "window_size_error" in raw:
+        state["window_size_error"] = raw["window_size_error"]
+    state["alert"] = raw.get("alert")
+    return state
+
+
 def ui_tree(visible_only=False, compact=False):
     """Flat list of UI elements from the current screen.
 
@@ -602,31 +671,7 @@ def ui_tree(visible_only=False, compact=False):
     if _tree_cache is not None and (now - _tree_cache_time) < _TREE_TTL:
         tree = _tree_cache
     else:
-        xml = page_source()
-        root = ET.fromstring(xml)
-        tree = []
-        for el in root.iter():
-            a = el.attrib
-            if "x" not in a or "width" not in a:
-                continue
-            try:
-                x, y = int(a["x"]), int(a["y"])
-                w, h = int(a["width"]), int(a["height"])
-            except (TypeError, ValueError):
-                continue
-            if w <= 0 or h <= 0:
-                continue
-            tree.append({
-                "type": a.get("type", el.tag),
-                "name": a.get("name") or "",
-                "label": a.get("label") or "",
-                "value": a.get("value") or "",
-                "x": x, "y": y, "w": w, "h": h,
-                "cx": x + w // 2, "cy": y + h // 2,
-                "accessible": a.get("accessible") == "true",
-                "visible": a.get("visible") == "true",
-                "traits": a.get("traits") or "",
-            })
+        tree = _parse_source(page_source())
         _tree_cache = tree
         _tree_cache_time = now
 
