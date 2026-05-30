@@ -148,31 +148,51 @@ def discovery_hints():
 
 # ---- running-daemon enumeration -------------------------------------------
 
-def _socket_dir():
-    return Path(os.environ.get("TMPDIR", "/tmp"))
+def _socket_dirs():
+    """Directories the iOS and Android daemons actually place sockets in.
+
+    Mirrors each harness's own resolution (IPH/ANH_RUNTIME_DIR -> *_TMP_DIR ->
+    /tmp). The daemons never consult TMPDIR, so neither do we: on macOS TMPDIR
+    defaults to /var/folders/... while daemons write to /tmp, and a custom
+    RUNTIME_DIR would otherwise be missed entirely — both made `devices
+    status/reload/view` report "No named daemons running" against live daemons.
+    Resolved dynamically (per call) so it tracks the current environment.
+    """
+    ios = os.environ.get("IPH_RUNTIME_DIR") or os.environ.get("IPH_TMP_DIR") or "/tmp"
+    anh = os.environ.get("ANH_RUNTIME_DIR") or os.environ.get("ANH_TMP_DIR") or "/tmp"
+    seen, dirs = set(), []
+    for d in (ios, anh):
+        if d not in seen:
+            seen.add(d)
+            dirs.append(Path(d))
+    return dirs
 
 
 def list_running_daemons():
-    """Scan the socket dir for active named daemons.
+    """Scan the daemons' socket dirs for active named daemons.
 
     Returns list of {"platform": "ios"|"android", "name": str|None, "alive": bool,
     "socket": str}. `name=None` is the default (unnamed) daemon.
     """
     out = []
-    sd = _socket_dir()
-    try:
-        entries = list(sd.iterdir())
-    except OSError:
-        return out
-
-    for p in entries:
-        m = re.match(r"^(iph|anh)(?:-([A-Za-z0-9_-]{1,64}))?\.sock$", p.name)
-        if not m:
+    seen_socks = set()
+    for sd in _socket_dirs():
+        try:
+            entries = list(sd.iterdir())
+        except OSError:
             continue
-        prefix, name = m.group(1), m.group(2)
-        platform = "ios" if prefix == "iph" else "android"
-        alive = _probe_daemon(platform, name)
-        out.append({"platform": platform, "name": name, "alive": alive, "socket": str(p)})
+        for p in entries:
+            m = re.match(r"^(iph|anh)(?:-([A-Za-z0-9_-]{1,64}))?\.sock$", p.name)
+            if not m:
+                continue
+            key = str(p)
+            if key in seen_socks:
+                continue
+            seen_socks.add(key)
+            prefix, name = m.group(1), m.group(2)
+            platform = "ios" if prefix == "iph" else "android"
+            alive = _probe_daemon(platform, name)
+            out.append({"platform": platform, "name": name, "alive": alive, "socket": str(p)})
     return out
 
 

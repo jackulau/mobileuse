@@ -114,12 +114,16 @@ def test_discovery_hints_when_tools_missing(monkeypatch):
 # ---- list_running_daemons ------------------------------------------------
 
 def test_list_running_daemons_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    # Point both harness runtime dirs at the empty tmp dir (the daemons resolve
+    # sockets via IPH/ANH_RUNTIME_DIR, never TMPDIR).
+    monkeypatch.setenv("IPH_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ANH_RUNTIME_DIR", str(tmp_path))
     assert devices.list_running_daemons() == []
 
 
 def test_list_running_daemons_parses_sockets(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("IPH_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ANH_RUNTIME_DIR", str(tmp_path))
     (tmp_path / "iph-iphone1.sock").touch()
     (tmp_path / "anh-pixel.sock").touch()
     (tmp_path / "iph.sock").touch()
