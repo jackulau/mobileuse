@@ -201,7 +201,10 @@ async def serve(name, handler):
         # umask 0o077 makes bind() create the socket as 0600 — no TOCTOU window before chmod.
         old_umask = os.umask(0o077)
         try:
-            server = await asyncio.start_unix_server(handler, path=path)
+            # limit=_MAX_MSG raises the StreamReader buffer above asyncio's 64KB
+            # default so a legitimate >64KB request line (e.g. set_value/paste_text
+            # with a long body) is read instead of breaking the connection.
+            server = await asyncio.start_unix_server(handler, path=path, limit=_MAX_MSG)
         finally:
             os.umask(old_umask)
     else:
@@ -213,7 +216,7 @@ async def serve(name, handler):
                 f"(ssh -L {port}:127.0.0.1:{port} <mac>) or restrict at firewall.",
                 file=sys.stderr,
             )
-        server = await asyncio.start_server(handler, host=host, port=port)
+        server = await asyncio.start_server(handler, host=host, port=port, limit=_MAX_MSG)
     async with server:
         await asyncio.Event().wait()
 
