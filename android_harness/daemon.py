@@ -67,6 +67,28 @@ def _get_appium_by():
     return _AppiumBy
 
 
+def _apply_extra_caps(o, env_var):
+    """Apply arbitrary Appium caps from a JSON env var (e.g. ANH_CAPS).
+
+    Lets you set automationName overrides, systemPort, skipServerInstallation,
+    chromedriver paths, etc. without editing source. Keys should carry their
+    normal prefix (e.g. "appium:systemPort"). Malformed JSON is logged + ignored.
+    """
+    raw = os.environ.get(env_var)
+    if not raw:
+        return
+    try:
+        extra = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        log(f"{env_var}: ignoring invalid JSON ({e})")
+        return
+    if not isinstance(extra, dict):
+        log(f"{env_var}: expected a JSON object, got {type(extra).__name__}")
+        return
+    for k, v in extra.items():
+        o.set_capability(k, v)
+
+
 def _build_options():
     """UiAutomator2Options for the current Android device."""
     from appium.options.android import UiAutomator2Options
@@ -92,6 +114,8 @@ def _build_options():
     # on session teardown.
     o.set_capability("appium:unicodeKeyboard", True)
     o.set_capability("appium:resetKeyboard", True)
+    # Arbitrary per-deployment cap overrides (systemPort, automationName, etc.).
+    _apply_extra_caps(o, "ANH_CAPS")
     return o
 
 

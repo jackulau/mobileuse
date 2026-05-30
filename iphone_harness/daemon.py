@@ -69,6 +69,49 @@ def _get_appium_by():
     return _AppiumBy
 
 
+def _apply_extra_caps(o, env_var):
+    """Apply arbitrary Appium caps from a JSON env var (e.g. IPH_CAPS / ANH_CAPS).
+
+    Lets you attach to a pre-running WDA (appium:webDriverAgentUrl), override
+    automationName for a new-OS quirk, set snapshotMaxDepth / skipServerInstallation,
+    etc., without editing source. Keys should carry their normal prefix
+    (e.g. "appium:webDriverAgentUrl"). Malformed JSON is logged and ignored.
+    """
+    raw = os.environ.get(env_var)
+    if not raw:
+        return
+    try:
+        extra = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        log(f"{env_var}: ignoring invalid JSON ({e})")
+        return
+    if not isinstance(extra, dict):
+        log(f"{env_var}: expected a JSON object, got {type(extra).__name__}")
+        return
+    for k, v in extra.items():
+        o.set_capability(k, v)
+
+
+def _default_wda_derived_data():
+    """Path to a prebuilt WebDriverAgent DerivedData dir, or None.
+
+    `mobile-use ios build-wda` lands a build under
+    ~/Library/Developer/Xcode/DerivedData/WebDriverAgent-*/Build/Products/. Pointing
+    the session at it (with usePrebuiltWDA) skips the 20-60s WDA reinstall/relaunch
+    that otherwise runs on every session create — the slowest op in the stack.
+    """
+    if sys.platform != "darwin":
+        return None
+    derived = Path("~/Library/Developer/Xcode/DerivedData").expanduser()
+    if not derived.exists():
+        return None
+    apps = list(derived.glob("WebDriverAgent-*/Build/Products/*/WebDriverAgentRunner-Runner.app"))
+    if not apps:
+        return None
+    latest = max(apps, key=lambda p: p.stat().st_mtime)
+    return str(latest.parents[3])
+
+
 def _build_options():
     """XCUITestOptions for the current device. Lazy import — appium is only needed in the daemon process."""
     from appium.options.ios import XCUITestOptions
@@ -94,6 +137,15 @@ def _build_options():
     # Don't auto-launch any app. The agent decides what to foreground; otherwise
     # connecting attaches to whatever's already on screen (SpringBoard, etc.).
     o.set_capability("appium:autoLaunch", False)
+    # Reuse a prebuilt WebDriverAgent when one exists — skips the slow per-session
+    # WDA reinstall. Only engages if a DerivedData build (or IPH_WDA_DERIVED_DATA_PATH)
+    # is present, so setups that haven't prebuilt WDA fall back to default behavior.
+    dd = os.environ.get("IPH_WDA_DERIVED_DATA_PATH") or _default_wda_derived_data()
+    if dd:
+        o.set_capability("appium:derivedDataPath", dd)
+        o.set_capability("appium:usePrebuiltWDA", True)
+    # Arbitrary per-deployment cap overrides (device farms, new-OS quirks, etc.).
+    _apply_extra_caps(o, "IPH_CAPS")
     return o
 
 
