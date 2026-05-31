@@ -16,6 +16,10 @@ from iphone_harness import _ipc as ipc
 NAME = os.environ.get("IPH_NAME", "default")
 LOG = str(ipc.log_path(NAME))
 PID = str(ipc.pid_path(NAME))
+# Routing identity for multibox tests: each daemon can report a distinct width so a
+# test can prove a Device reached THIS daemon and not a sibling. Default 390 keeps
+# all existing single-daemon tests unchanged.
+WIDTH = int(os.environ.get("MOCK_WIDTH", "390"))
 
 
 class MockDaemon:
@@ -54,13 +58,13 @@ class MockDaemon:
         if method == "screenshot":
             return {"result": {"path": "/tmp/iph-mock-shot.png", "bytes": 0}}
         if method == "window_size":
-            return {"result": {"width": 390, "height": 844}}
+            return {"result": {"width": WIDTH, "height": 844}}
         if method == "snapshot":
             return {"result": {
                 "screenshot": {"path": "/tmp/iph-mock-shot.png", "bytes": 0},
                 "page_source": "<XCUIElementTypeApplication name='SpringBoard'/>",
                 "active_app": {"bundleId": "com.apple.springboard", "name": "SpringBoard"},
-                "window_size": {"width": 390, "height": 844},
+                "window_size": {"width": WIDTH, "height": 844},
                 "alert": None,
             }}
         if method == "get_orientation":
