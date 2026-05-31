@@ -8,6 +8,7 @@ Same design as iphone_harness/helpers.py:
   - coordinate-first interaction (`tap_at_xy`); UI-tree-aware helpers (`find`) for stable labels
   - one public escape hatch: `appium('mobile: ...', **params)` — anything UIAutomator2 supports
 """
+import contextvars
 import importlib.util
 import os
 import threading
@@ -38,40 +39,90 @@ _load_env()
 
 NAME = os.environ.get("ANH_NAME", "default")
 
+# Active daemon name for the current call context. None → fall back to module
+# NAME (the single-device default; also lets tests set helpers.NAME directly).
+# DevicePool.Device binds this per proxied verb (via _use_name/_reset_name) so one
+# process can address many named daemons without reloading this module — the same
+# per-name addressing viewer.NamedStreamClient already uses at the _ipc layer.
+_name_var = contextvars.ContextVar("anh_active_name", default=None)
+
+
+def _active_name():
+    n = _name_var.get()
+    return n if n is not None else NAME
+
+
+def _use_name(name):
+    """Bind the active daemon name for the current context; returns a reset token."""
+    return _name_var.set(name)
+
+
+def _reset_name(token):
+    _name_var.reset(token)
+
 
 MAX_RETRIES = int(os.environ.get("ANH_MAX_RETRIES", "2"))
 RETRY_DELAY = float(os.environ.get("ANH_RETRY_DELAY", "0.3"))
 
-_cached_sock = None
-_cached_token = None
-# Serialize the shared module-global socket across threads — the `mobile-use
-# --headed` ViewerServer (ThreadingMixIn) calls screen_stream_frame() (→ _send)
-# concurrently. Reentrant so the retry path re-entering _send doesn't deadlock.
-_conn_lock = threading.RLock()
+class _Conn:
+    """Per-daemon cached socket + reentrant lock. The lock serializes the
+    connect/request/drop round-trip for ONE daemon (the `mobile-use --headed`
+    ViewerServer is a ThreadingMixIn whose handlers call screen_stream_frame()
+    → _send from many threads — a shared socket would corrupt framing) while
+    letting DIFFERENT daemons run fully in parallel (DevicePool.broadcast).
+    Reentrant so the retry path (which re-enters _send) doesn't self-deadlock."""
+    __slots__ = ("sock", "token", "lock")
+
+    def __init__(self):
+        self.sock = None
+        self.token = None
+        self.lock = threading.RLock()
+
+
+_conns = {}                       # name -> _Conn
+_conns_guard = threading.Lock()   # guards the _conns dict itself
+
+
+def _conn_state(name):
+    with _conns_guard:
+        st = _conns.get(name)
+        if st is None:
+            st = _conns[name] = _Conn()
+        return st
 
 
 def _get_conn(timeout=5.0):
-    """Reuse existing socket if still alive; otherwise open a new one."""
-    global _cached_sock, _cached_token
-    if _cached_sock is not None:
+    """Reuse the active daemon's socket if still alive; otherwise open a new one."""
+    name = _active_name()
+    st = _conn_state(name)
+    if st.sock is not None:
         try:
-            _cached_sock.settimeout(timeout)
-            return _cached_sock, _cached_token
+            st.sock.settimeout(timeout)
+            return st.sock, st.token
         except OSError:
-            _cached_sock = None
-    s, t = ipc.connect(NAME, timeout=timeout)
-    _cached_sock, _cached_token = s, t
+            st.sock = None
+    s, t = ipc.connect(name, timeout=timeout)
+    st.sock, st.token = s, t
     return s, t
 
 
 def _drop_conn():
-    global _cached_sock, _cached_token
-    if _cached_sock is not None:
+    st = _conn_state(_active_name())
+    if st.sock is not None:
         try:
-            _cached_sock.close()
+            st.sock.close()
         except OSError:
             pass
-        _cached_sock = _cached_token = None
+        st.sock = st.token = None
+
+
+def __getattr__(name):
+    # Back-compat read aliases: expose the ACTIVE daemon's cached socket/token under
+    # the legacy module-global names that tests + introspection still reference.
+    if name in ("_cached_sock", "_cached_token"):
+        st = _conn_state(_active_name())
+        return st.sock if name == "_cached_sock" else st.token
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _send(req, timeout=120.0, _retries=None):
@@ -79,7 +130,8 @@ def _send(req, timeout=120.0, _retries=None):
     with a 3-line remediation pointing at `--doctor` and `--reload`."""
     if _retries is None:
         _retries = MAX_RETRIES
-    with _conn_lock:
+    name = _active_name()
+    with _conn_state(name).lock:
         try:
             c, token = _get_conn(timeout=min(timeout, 5.0))
             c.settimeout(timeout)
@@ -89,7 +141,7 @@ def _send(req, timeout=120.0, _retries=None):
             if _retries > 0:
                 time.sleep(RETRY_DELAY * (2 ** (MAX_RETRIES - _retries)))
                 from .admin import ensure_daemon
-                ensure_daemon()
+                ensure_daemon(name=name)
                 return _send(req, timeout=timeout, _retries=_retries - 1)
             raise RuntimeError(
                 f"android-harness daemon unreachable after {MAX_RETRIES} retries.\n"
@@ -214,8 +266,9 @@ def retry_on_disconnect(max_attempts=3, backoff=0.5):
                         time.sleep(backoff * (2 ** attempt))
                         try:
                             from .admin import ensure_daemon, restart_daemon
-                            restart_daemon()
-                            ensure_daemon()
+                            _name = _active_name()
+                            restart_daemon(_name)
+                            ensure_daemon(name=_name)
                             wake_device()
                         except Exception:
                             pass
