@@ -22,6 +22,7 @@ Usage:
     # Parallel execution
     pool.broadcast(lambda d: d.screenshot())
 """
+import functools
 import hashlib
 import os
 import socket
@@ -82,56 +83,38 @@ class Device:
         return env
 
     def _load(self):
+        """Import this device's harness modules once. No module reloading and no
+        global-env mutation: the per-device daemon name is bound per call via
+        helpers._use_name (see _bound) so concurrent devices never cross-route.
+        The spawned daemon still receives its IPH_*/ANH_* env via ensure_daemon(env=).
+        """
         if self._helpers is not None:
             return
-
-        device_env = self._build_env()
-        for k, v in device_env.items():
-            if k.startswith(("IPH_", "ANH_")):
-                os.environ.setdefault(k, v)
-
         if self.platform == "ios":
-            env_backup = os.environ.get("IPH_NAME")
-            os.environ["IPH_NAME"] = self.name
-            for k, v in self._env.items():
-                os.environ[k] = v
-
-            import importlib
-
-            import iphone_harness._ipc
-            import iphone_harness.admin
-            import iphone_harness.helpers
-
-            importlib.reload(iphone_harness._ipc)
-            importlib.reload(iphone_harness.helpers)
-            importlib.reload(iphone_harness.admin)
-
-            self._helpers = iphone_harness.helpers
-            self._admin = iphone_harness.admin
-
-            if env_backup is not None:
-                os.environ["IPH_NAME"] = env_backup
+            import iphone_harness.admin as admin
+            import iphone_harness.helpers as helpers
         else:
-            env_backup = os.environ.get("ANH_NAME")
-            os.environ["ANH_NAME"] = self.name
-            for k, v in self._env.items():
-                os.environ[k] = v
+            import android_harness.admin as admin
+            import android_harness.helpers as helpers
+        self._helpers = helpers
+        self._admin = admin
 
-            import importlib
+    def _bound(self, fn):
+        """Wrap a helpers verb so it runs with this device's daemon name bound for
+        the duration of the call — the same per-name addressing NamedStreamClient
+        uses. Safe under DevicePool's ThreadPoolExecutor: the contextvar is set in
+        the worker thread that actually runs the call."""
+        helpers = self._helpers
+        dev_name = self.name
 
-            import android_harness._ipc
-            import android_harness.admin
-            import android_harness.helpers
-
-            importlib.reload(android_harness._ipc)
-            importlib.reload(android_harness.helpers)
-            importlib.reload(android_harness.admin)
-
-            self._helpers = android_harness.helpers
-            self._admin = android_harness.admin
-
-            if env_backup is not None:
-                os.environ["ANH_NAME"] = env_backup
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            token = helpers._use_name(dev_name)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                helpers._reset_name(token)
+        return wrapper
 
     def ensure_ready(self):
         """Ensure the daemon for this device is running."""
@@ -140,20 +123,24 @@ class Device:
         self._admin.ensure_daemon(name=self.name, env=env)
 
     def run(self, code):
-        """Execute a code string with helpers pre-imported."""
+        """Execute a code string with helpers pre-imported, bound to this device."""
         self._load()
         ns = {k: v for k, v in vars(self._helpers).items() if not k.startswith("_")}
         ns["__builtins__"] = __builtins__
-        exec(code, ns)
+        token = self._helpers._use_name(self.name)
+        try:
+            exec(code, ns)
+        finally:
+            self._helpers._reset_name(token)
 
     def __getattr__(self, name):
-        """Proxy attribute access to the helpers module."""
+        """Proxy attribute access to the helpers module, bound to this device's name."""
         if name.startswith("_") or name in ("name", "platform"):
             raise AttributeError(name)
         self._load()
         fn = getattr(self._helpers, name, None)
         if fn is not None and callable(fn):
-            return fn
+            return self._bound(fn)
         raise AttributeError(f"Device {self.name!r} has no helper {name!r}")
 
     def __repr__(self):
