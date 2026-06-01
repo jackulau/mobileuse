@@ -77,6 +77,27 @@ codesigning are macOS-only by Apple). Two patterns:
 See [`SETUP.md` → "iOS from Windows / Linux"](SETUP.md#ios-from-windows--linux)
 for the full walkthrough.
 
+### Windows
+
+Android-on-Windows is a first-class target. `adb` and Appium are
+cross-platform — install the Android platform-tools (`adb` on `PATH`) plus
+Node + Appium, then:
+
+```powershell
+# Windows host (PowerShell):
+pip install -e .
+mobile-use quickstart --android
+```
+
+The daemon transport auto-selects **TCP loopback** on Windows (the AF_UNIX
+sockets used on macOS/Linux are Unix-only). Each named device gets a
+deterministic loopback port, so multi-device routing, `devices status/reload`,
+and the viewer all work exactly as on macOS/Linux — no configuration needed.
+
+**iOS on Windows** needs a Mac in the loop (Xcode + Apple codesigning are
+macOS-only) — use the same remote-Mac bridge as Linux above
+([`SETUP.md` → "iOS from Windows / Linux"](SETUP.md#ios-from-windows--linux)).
+
 ### Multi-device — drive several phones at once
 
 ```bash
