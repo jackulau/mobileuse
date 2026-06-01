@@ -13,9 +13,11 @@ via a remote macOS Appium server — there is no local Linux path to a built
 WebDriverAgent. Callers that need iOS-on-Linux check `IPH_APPIUM_URL`
 pointing at a non-localhost host (the remote macOS Appium).
 """
+import hashlib
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -56,6 +58,46 @@ def windows_ios_setup_hint() -> str:
         "     `mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c ...`\n"
         "Docs: see SETUP.md -> 'iOS from Windows / Linux (remote Mac bridge)'."
     )
+
+
+def windows_runtime_dir() -> str:
+    """Windows-writable base dir for daemon pid/log files.
+
+    Prefers %LOCALAPPDATA%\\mobile-use, falls back to tempfile.gettempdir().
+    Never '/tmp' — on Windows Path('/tmp') maps to <drive>:\\tmp, which is the
+    wrong location and often not writable. Pure function: does NOT create the
+    dir (callers mkdir the resolved base). iOS/AF_UNIX constraints don't apply
+    on Windows — the daemon uses TCP loopback there (see daemon_tcp_port)."""
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    return str(Path(base) / "mobile-use")
+
+
+def default_runtime_base() -> str:
+    """Platform-correct base dir for daemon runtime files (pid/log/sock).
+
+    POSIX → '/tmp': AF_UNIX sun_path is capped near 104 bytes and macOS's
+    tempfile.gettempdir() returns a too-long /var/folders/... path, so the
+    short, well-known /tmp is the only safe AF_UNIX home (this preserves the
+    existing behavior documented in iphone_harness/_ipc.py).
+    Windows → windows_runtime_dir() (AF_UNIX is unavailable; daemon uses TCP)."""
+    if is_windows():
+        return windows_runtime_dir()
+    return "/tmp"
+
+
+def daemon_tcp_port(name: str) -> int:
+    """Deterministic, idempotent loopback RPC port for a named daemon.
+
+    The Windows default transport (AF_UNIX is unavailable on Windows CPython).
+    Hashing the name into a fixed range lets the daemon (bind side) and the
+    client (connect side) independently compute the SAME port from the same
+    name — name-based routing survives with zero shared state. Range 8400-8499
+    is clear of multibox's Appium range (4724-4799). Mirrors the sha256-modulo
+    scheme of multibox._allocate_appium_port for consistency."""
+    low, high = 8400, 8499
+    span = high - low + 1
+    digest = int(hashlib.sha256((name or "").encode()).hexdigest(), 16)
+    return low + (digest % span)
 
 
 def linux_pkg_manager():
