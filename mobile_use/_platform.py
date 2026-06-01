@@ -100,6 +100,53 @@ def daemon_tcp_port(name: str) -> int:
     return low + (digest % span)
 
 
+def _process_exists_windows(pid: int) -> bool:
+    """Windows process-existence check via the Win32 API — NEVER os.kill.
+
+    On Windows os.kill(pid, sig) maps any non-CTRL signal (including 0) to
+    TerminateProcess, so the POSIX `os.kill(pid, 0)` liveness idiom would KILL
+    the process being probed. OpenProcess + GetExitCodeProcess is the safe
+    read-only equivalent: a running process reports STILL_ACTIVE (259)."""
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    ERROR_ACCESS_DENIED = 5
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        # Couldn't open: ACCESS_DENIED → the pid exists but isn't ours (treat as
+        # alive, mirroring POSIX EPERM); any other error → no such process.
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # handle opened but exit code unreadable → assume alive
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def process_exists(pid: int) -> bool:
+    """Liveness probe for a pid that is SAFE on every platform.
+
+    POSIX → os.kill(pid, 0): signal 0 only checks existence, never delivers.
+    Windows → Win32 OpenProcess (os.kill would TerminateProcess the pid — see
+    _process_exists_windows). Mirrors POSIX semantics: a process owned by
+    another user counts as alive. Callers must type-validate pid first."""
+    if is_windows():
+        return _process_exists_windows(pid)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists but not ours — don't treat as dead
+    except OSError:
+        return False
+
+
 def linux_pkg_manager():
     """Return 'apt' | 'dnf' | 'pacman' | 'zypper' | 'apk' | None.
 

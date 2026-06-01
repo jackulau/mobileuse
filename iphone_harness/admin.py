@@ -19,6 +19,8 @@ from mobile_use._platform import (
     install_hint,
     is_linux,
     is_macos,
+    is_windows,
+    process_exists,
 )
 
 from . import _ipc as ipc
@@ -60,19 +62,15 @@ def daemon_alive(name=None):
 
 
 def _pid_alive(pid):
-    """True if a process with this pid exists."""
-    # isinstance(True, int) is True in Python — reject bool to avoid os.kill(1, 0).
+    """True if a process with this pid exists.
+
+    Delegates the probe to _platform.process_exists, which is Windows-safe:
+    on Windows os.kill(pid, 0) calls TerminateProcess and would KILL the pid
+    being probed, so the POSIX os.kill idiom must never run there."""
+    # isinstance(True, int) is True in Python — reject bool to avoid probing pid 1/True.
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # process exists but not ours — don't wipe its files
-    except OSError:
-        return False
+    return process_exists(pid)
 
 
 def cleanup_stale(name=None):

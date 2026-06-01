@@ -267,3 +267,26 @@ def test_windows_runtime_dir_falls_back_to_tempdir(monkeypatch):
     # by env; the result is the OS temp dir with the mobile-use subdir appended.
     assert d.endswith("mobile-use") or "mobile-use" in d
     assert tempfile.gettempdir() in d
+
+
+def test_process_exists_posix_true_for_self():
+    assert _platform.process_exists(os.getpid()) is True
+
+
+def test_process_exists_posix_false_for_dead_pid():
+    # A pid that almost certainly does not exist → not alive (and no crash).
+    assert _platform.process_exists(2_000_000_000) is False
+
+
+def test_process_exists_windows_never_calls_os_kill(monkeypatch):
+    # On Windows os.kill maps signal 0 to TerminateProcess and would KILL the
+    # pid being probed. Assert the win32 branch delegates to the Win32 helper
+    # and NEVER touches os.kill.
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def _boom(*a, **k):
+        raise AssertionError("os.kill must NOT be called on Windows")
+
+    monkeypatch.setattr(os, "kill", _boom)
+    monkeypatch.setattr(_platform, "_process_exists_windows", lambda pid: True)
+    assert _platform.process_exists(1234) is True
