@@ -25,3 +25,21 @@ def test_cli_has_no_false_not_implemented_message():
     assert "not yet implemented" not in cli, (
         "the agent loop IS implemented — the false 'not yet implemented' message must be gone"
     )
+
+
+def test_ci_matrix_includes_all_three_oses():
+    # windows-latest is the ground truth that the daemon transport/routing/
+    # liveness/teardown work on Windows; it must not be silently dropped.
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    for os_name in ("ubuntu-latest", "macos-latest", "windows-latest"):
+        assert os_name in ci, f"CI matrix must include {os_name}"
+
+
+def test_ci_adb_step_stays_linux_gated():
+    # The apt-based adb install is Linux-only — it must stay gated so it never
+    # runs on the Windows or macOS legs (no apt-get there).
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "android-tools-adb" in ci, "the Linux adb smoke step should still exist"
+    assert "runner.os == 'Linux'" in ci, (
+        "the adb install step must stay gated on `runner.os == 'Linux'`"
+    )
