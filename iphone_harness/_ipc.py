@@ -85,20 +85,37 @@ def parse_endpoint(spec):
     raise ValueError(f"endpoint must start with 'unix:' or 'tcp://': {spec!r}")
 
 
+def _default_endpoint(name):
+    """Transport used when no IPH_BIND/IPH_CONNECT override is set.
+
+    POSIX → AF_UNIX socket file (short path under the runtime dir). Windows →
+    TCP loopback on a deterministic per-name port: AF_UNIX is unavailable on
+    Windows CPython (no socket.AF_UNIX, no asyncio.start_unix_server), so the
+    daemon binds TCP and the client connects TCP. Both sides compute the SAME
+    port from the name (mobile_use._platform.daemon_tcp_port) so routing-by-name
+    survives with zero shared state. Imported lazily to keep _ipc a dependency
+    -free leaf (no import cycle through mobile_use/__init__)."""
+    from mobile_use._platform import daemon_tcp_port, is_windows
+    _check(name)
+    if is_windows():
+        return ("tcp", "127.0.0.1", daemon_tcp_port(name))
+    return ("unix", str(_sock_path(name)))
+
+
 def bind_endpoint(name):
-    """Server-side endpoint. IPH_BIND overrides; default = unix path under runtime dir."""
+    """Server-side endpoint. IPH_BIND overrides; default = unix on POSIX / tcp loopback on Windows."""
     spec = os.environ.get("IPH_BIND")
     if spec:
         return parse_endpoint(spec)
-    return ("unix", str(_sock_path(name)))
+    return _default_endpoint(name)
 
 
 def connect_endpoint(name):
-    """Client-side endpoint. IPH_CONNECT overrides; default = unix path under runtime dir."""
+    """Client-side endpoint. IPH_CONNECT overrides; default = unix on POSIX / tcp loopback on Windows."""
     spec = os.environ.get("IPH_CONNECT")
     if spec:
         return parse_endpoint(spec)
-    return ("unix", str(_sock_path(name)))
+    return _default_endpoint(name)
 
 
 def sock_addr(name):
