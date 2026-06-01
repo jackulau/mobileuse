@@ -306,6 +306,43 @@ def test_kill_pid_windows_uses_sigterm_not_sigkill(monkeypatch):
     assert calls == [(4321, _signal.SIGTERM)]
 
 
+def test_ensure_utf8_streams_reconfigures_stdout_stderr(monkeypatch):
+    # Locks the real Windows bug fix: the CLI crashed with UnicodeEncodeError
+    # printing '→' to a cp1252 console. ensure_utf8_streams must reconfigure
+    # both streams to UTF-8.
+    calls = []
+
+    class _FakeStream:
+        def reconfigure(self, **kw):
+            calls.append(kw)
+
+    monkeypatch.setattr(sys, "stdout", _FakeStream())
+    monkeypatch.setattr(sys, "stderr", _FakeStream())
+    _platform.ensure_utf8_streams()
+    assert calls == [
+        {"encoding": "utf-8", "errors": "replace"},
+        {"encoding": "utf-8", "errors": "replace"},
+    ]
+
+
+def test_ensure_utf8_streams_tolerates_missing_reconfigure(monkeypatch):
+    # A replaced/captured stream without .reconfigure (e.g. under pytest) must
+    # not raise.
+    monkeypatch.setattr(sys, "stdout", object())
+    monkeypatch.setattr(sys, "stderr", object())
+    _platform.ensure_utf8_streams()  # no exception
+
+
+def test_ensure_utf8_streams_swallows_reconfigure_error(monkeypatch):
+    class _BadStream:
+        def reconfigure(self, **kw):
+            raise ValueError("unsupported")
+
+    monkeypatch.setattr(sys, "stdout", _BadStream())
+    monkeypatch.setattr(sys, "stderr", _BadStream())
+    _platform.ensure_utf8_streams()  # ValueError swallowed, no crash
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="signal.SIGKILL is POSIX-only; the Windows kill_pid path is covered by test_kill_pid_windows_*")
 def test_kill_pid_posix_escalates_to_sigkill(monkeypatch):
     import signal as _signal
