@@ -118,6 +118,16 @@ def sock_addr(name):
 
 
 def spawn_kwargs():
+    """Popen kwargs that detach the daemon from the launching process.
+
+    POSIX → start_new_session=True (setsid: new session so the daemon outlives
+    the CLI that spawned it). Windows → DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP
+    (start_new_session is a POSIX-only setsid and does NOT detach on Windows).
+    The Windows creationflags constants only exist in the subprocess module on
+    Windows, so they are referenced solely inside the is_windows() branch."""
+    if is_windows():
+        import subprocess
+        return {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 
