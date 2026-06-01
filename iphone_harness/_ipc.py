@@ -19,12 +19,16 @@ import socket
 import sys
 from pathlib import Path
 
+from mobile_use._platform import daemon_tcp_port, default_runtime_base, is_windows
+
 # AF_UNIX sun_path on macOS is 104 bytes. /tmp keeps the path short; macOS's
 # tempfile.gettempdir() returns /var/folders/... which is too long for AF_UNIX.
+# default_runtime_base() returns '/tmp' on POSIX (preserving this) and a
+# Windows-writable dir on win32 (where AF_UNIX doesn't apply — TCP loopback).
 IPH_TMP_DIR = os.environ.get("IPH_TMP_DIR")
 IPH_RUNTIME_DIR = os.environ.get("IPH_RUNTIME_DIR") or IPH_TMP_DIR
-_TMP = Path(IPH_TMP_DIR or "/tmp")
-_RUNTIME = Path(IPH_RUNTIME_DIR or "/tmp")
+_TMP = Path(IPH_TMP_DIR or default_runtime_base())
+_RUNTIME = Path(IPH_RUNTIME_DIR or default_runtime_base())
 _TMP.mkdir(parents=True, exist_ok=True)
 _RUNTIME.mkdir(parents=True, exist_ok=True)
 _NAME_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
@@ -93,9 +97,7 @@ def _default_endpoint(name):
     Windows CPython (no socket.AF_UNIX, no asyncio.start_unix_server), so the
     daemon binds TCP and the client connects TCP. Both sides compute the SAME
     port from the name (mobile_use._platform.daemon_tcp_port) so routing-by-name
-    survives with zero shared state. Imported lazily to keep _ipc a dependency
-    -free leaf (no import cycle through mobile_use/__init__)."""
-    from mobile_use._platform import daemon_tcp_port, is_windows
+    survives with zero shared state."""
     _check(name)
     if is_windows():
         return ("tcp", "127.0.0.1", daemon_tcp_port(name))
