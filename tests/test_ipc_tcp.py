@@ -119,11 +119,15 @@ def test_transport_sock_addr_tcp_returns_uri_android(monkeypatch):
 
 
 def test_transport_sock_addr_unix_unchanged_default(monkeypatch):
-    """No IPH_BIND set → behaves exactly like the old unix-only sock_addr."""
+    """No IPH_BIND set → unix .sock on POSIX, tcp:// loopback uri on Windows."""
     monkeypatch.delenv("IPH_BIND", raising=False)
     addr = iph_ipc.sock_addr("default")
-    assert addr.endswith(".sock")
-    assert "tcp://" not in addr
+    if sys.platform == "win32":
+        # Windows has no AF_UNIX — the default endpoint is tcp loopback.
+        assert addr.startswith("tcp://127.0.0.1:")
+    else:
+        assert addr.endswith(".sock")
+        assert "tcp://" not in addr
 
 
 # ---- cleanup_endpoint dispatch -------------------------------------------
@@ -142,8 +146,45 @@ def test_transport_default_is_unix_iphone(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     bep = iph_ipc.bind_endpoint("default")
     cep = iph_ipc.connect_endpoint("default")
-    assert bep[0] == "unix" and cep[0] == "unix"
-    assert bep[1].endswith(".sock")
+    if sys.platform == "win32":
+        # No AF_UNIX on Windows → deterministic tcp loopback default; bind and
+        # connect must resolve the IDENTICAL port (no name-routing cross-wire).
+        assert bep[0] == "tcp" and cep[0] == "tcp"
+        assert bep == cep
+    else:
+        assert bep[0] == "unix" and cep[0] == "unix"
+        assert bep[1].endswith(".sock")
+
+
+# ---- Windows default transport (monkeypatched — no real Windows box needed) -
+# anh_ipc/iph_ipc + mobile_use._platform are imported at module top under the
+# real (darwin/linux) platform, so flipping sys.platform in the body only
+# changes the call-time is_windows() check — no fresh import under fake win32
+# (which would hit Windows-only _winapi/_overlapped on a POSIX host).
+
+@pytest.mark.parametrize("mod,prefix", [(iph_ipc, "IPH"), (anh_ipc, "ANH")])
+def test_windows_default_transport_is_tcp_loopback(mod, prefix, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    for suf in ("_BIND", "_CONNECT"):
+        monkeypatch.delenv(prefix + suf, raising=False)
+    bep = mod.bind_endpoint("phone-1")
+    cep = mod.connect_endpoint("phone-1")
+    assert bep[0] == "tcp" and bep[1] == "127.0.0.1"
+    # bind and connect MUST resolve the identical port from the name, else two
+    # named daemons silently share a connection and corrupt JSON-line framing.
+    assert bep == cep
+    assert 8400 <= bep[2] <= 8499
+
+
+@pytest.mark.parametrize("mod,prefix", [(iph_ipc, "IPH"), (anh_ipc, "ANH")])
+def test_windows_default_port_per_name_and_idempotent(mod, prefix, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    for suf in ("_BIND", "_CONNECT"):
+        monkeypatch.delenv(prefix + suf, raising=False)
+    # idempotent: same name → same port across calls (daemon respawn safe)
+    assert mod.bind_endpoint("alpha") == mod.bind_endpoint("alpha")
+    # distinct names → distinct ports (name-based routing does not cross-wire)
+    assert mod.bind_endpoint("alpha")[2] != mod.bind_endpoint("beta")[2]
 
 
 def test_transport_env_override_to_tcp(monkeypatch):
