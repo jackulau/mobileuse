@@ -208,3 +208,62 @@ def test_bootstrap_legacy_symbols_still_present():
     assert callable(bootstrap._linux_adb_install_cmd)
     assert callable(bootstrap._linux_node_install_cmd)
     assert callable(bootstrap._linux_libimobiledevice_install_cmd)
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform daemon runtime-dir + deterministic per-name TCP port helpers
+# (goal/017 — make Windows routing/networking work without a real Windows box).
+# ---------------------------------------------------------------------------
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def test_daemon_tcp_port_is_deterministic_per_name():
+    # Same name → same port every call (idempotent daemon respawn + the
+    # bind-side and connect-side independently computing one identical port).
+    assert _platform.daemon_tcp_port("alpha") == _platform.daemon_tcp_port("alpha")
+    assert _platform.daemon_tcp_port("phone-1") == _platform.daemon_tcp_port("phone-1")
+
+
+def test_daemon_tcp_port_distinct_across_names():
+    # Distinct names must not silently share one port (would cross-wire routing).
+    ports = {_platform.daemon_tcp_port(n) for n in ("alpha", "beta", "phone-1", "phone-2", "default")}
+    assert len(ports) == 5
+
+
+def test_daemon_tcp_port_in_range():
+    for n in ("alpha", "beta", "x", "a-very-long-daemon-name_0123456789"):
+        p = _platform.daemon_tcp_port(n)
+        assert 8400 <= p <= 8499, (n, p)
+
+
+def test_default_runtime_base_posix_is_tmp(monkeypatch):
+    # POSIX must stay '/tmp' — AF_UNIX sun_path constraint (the 831 baseline
+    # asserts unix sockets under /tmp; flipping this would regress macOS/Linux).
+    for plat in ("darwin", "linux"):
+        monkeypatch.setattr(sys, "platform", plat)
+        assert _platform.default_runtime_base() == "/tmp"
+
+
+def test_default_runtime_base_windows_is_not_tmp(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(os.environ, "LOCALAPPDATA", r"C:\Users\dev\AppData\Local")
+    base = _platform.default_runtime_base()
+    assert base != "/tmp"
+    assert "mobile-use" in base
+    assert "AppData" in base
+
+
+def test_windows_runtime_dir_prefers_localappdata(monkeypatch):
+    monkeypatch.setitem(os.environ, "LOCALAPPDATA", r"C:\Users\dev\AppData\Local")
+    d = _platform.windows_runtime_dir()
+    assert "AppData" in d and "mobile-use" in d
+
+
+def test_windows_runtime_dir_falls_back_to_tempdir(monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    d = _platform.windows_runtime_dir()
+    # Falls back to tempfile.gettempdir() — never bare '/tmp' literal selection
+    # by env; the result is the OS temp dir with the mobile-use subdir appended.
+    assert d.endswith("mobile-use") or "mobile-use" in d
+    assert tempfile.gettempdir() in d
