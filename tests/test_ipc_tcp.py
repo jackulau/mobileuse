@@ -187,6 +187,27 @@ def test_windows_default_port_per_name_and_idempotent(mod, prefix, monkeypatch):
     assert mod.bind_endpoint("alpha")[2] != mod.bind_endpoint("beta")[2]
 
 
+# ---- spawn_kwargs process detachment -------------------------------------
+
+@pytest.mark.parametrize("mod", [iph_ipc, anh_ipc])
+def test_spawn_kwargs_posix_uses_start_new_session(mod, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert mod.spawn_kwargs() == {"start_new_session": True}
+
+
+@pytest.mark.parametrize("mod", [iph_ipc, anh_ipc])
+def test_spawn_kwargs_windows_uses_detached_creationflags(mod, monkeypatch):
+    # DETACHED_PROCESS / CREATE_NEW_PROCESS_GROUP only exist in subprocess on
+    # Windows; inject them so the win32 branch is exercisable on a POSIX host.
+    # (Values match the real Win32 constants, so this also holds on Windows.)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "DETACHED_PROCESS", 0x8, raising=False)
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    kw = mod.spawn_kwargs()
+    assert "start_new_session" not in kw, "start_new_session is a POSIX no-op on Windows"
+    assert kw.get("creationflags") == (0x8 | 0x200)
+
+
 def test_transport_env_override_to_tcp(monkeypatch):
     monkeypatch.setenv("IPH_BIND", "tcp://127.0.0.1:9999")
     monkeypatch.setenv("IPH_CONNECT", "tcp://127.0.0.1:9999")
