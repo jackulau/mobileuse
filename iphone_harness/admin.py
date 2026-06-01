@@ -6,7 +6,6 @@ The agent-facing functions are:
   - run_doctor()         diagnostic: Appium up, device paired, WDA trusted, daemon healthy
 """
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -19,7 +18,7 @@ from mobile_use._platform import (
     install_hint,
     is_linux,
     is_macos,
-    is_windows,
+    kill_pid,
     process_exists,
 )
 
@@ -224,22 +223,17 @@ def restart_daemon(name=None):
         time.sleep(0.1)
 
     # Step 3: if still alive AND we verified identity, escalate to SIGTERM.
+    # (Windows-safe hard kill via _platform.kill_pid.)
     if daemon_alive(name) and daemon_pid:
-        try:
-            os.kill(daemon_pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        kill_pid(daemon_pid, hard=False)
         # Wait up to 2s for SIGTERM to settle.
         deadline = time.time() + 2.0
         while time.time() < deadline and _pid_alive(daemon_pid):
             time.sleep(0.1)
 
-    # Step 4: SIGKILL the daemon if it's still alive after SIGTERM.
+    # Step 4: hard-kill the daemon if it's still alive after SIGTERM.
     if daemon_pid and _pid_alive(daemon_pid):
-        try:
-            os.kill(daemon_pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        kill_pid(daemon_pid, hard=True)
         # Reap zombie state on local process.
         time.sleep(0.2)
 

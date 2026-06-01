@@ -1,6 +1,5 @@
 """Daemon lifecycle, doctor, --reload for Android harness."""
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -13,7 +12,7 @@ from mobile_use._platform import (
     install_hint,
     is_linux,
     is_macos,
-    is_windows,
+    kill_pid,
     process_exists,
 )
 
@@ -189,19 +188,13 @@ def restart_daemon(name=None):
         time.sleep(0.1)
 
     if daemon_alive(name) and daemon_pid:
-        try:
-            os.kill(daemon_pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        kill_pid(daemon_pid, hard=False)  # Windows-safe terminate (see _platform.kill_pid)
         deadline = time.time() + 2.0
         while time.time() < deadline and _pid_alive(daemon_pid):
             time.sleep(0.1)
 
     if daemon_pid and _pid_alive(daemon_pid):
-        try:
-            os.kill(daemon_pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        kill_pid(daemon_pid, hard=True)
         time.sleep(0.2)
 
     try: os.unlink(pid_path)

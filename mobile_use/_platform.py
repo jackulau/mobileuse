@@ -16,6 +16,7 @@ pointing at a non-localhost host (the remote macOS Appium).
 import hashlib
 import os
 import shutil
+import signal
 import sys
 import tempfile
 from pathlib import Path
@@ -145,6 +146,29 @@ def process_exists(pid: int) -> bool:
         return True  # exists but not ours — don't treat as dead
     except OSError:
         return False
+
+
+def kill_pid(pid: int, hard: bool = False) -> None:
+    """Best-effort terminate a pid, swallowing already-dead / not-ours errors.
+
+    POSIX: hard=False → SIGTERM (graceful), hard=True → SIGKILL.
+    Windows: there is no graceful signal and signal.SIGKILL does not exist
+    (referencing it raises AttributeError — the bug this replaces). os.kill with
+    any non-CTRL signal maps to TerminateProcess, so one SIGTERM is a hard kill;
+    SIGKILL is never referenced. Centralized here so both harness admins share
+    one Windows-safe implementation (no per-twin signal handling to drift)."""
+    if is_windows():
+        sig = signal.SIGTERM  # os.kill → TerminateProcess; no SIGKILL on Windows
+    else:
+        sig = signal.SIGKILL if hard else signal.SIGTERM
+    try:
+        os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+    except OSError:
+        # Windows raises a generic OSError (e.g. WinError 87) for a dead/invalid
+        # pid; POSIX may raise EINVAL. Best-effort teardown swallows both.
+        pass
 
 
 def linux_pkg_manager():

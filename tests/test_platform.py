@@ -290,3 +290,26 @@ def test_process_exists_windows_never_calls_os_kill(monkeypatch):
     monkeypatch.setattr(os, "kill", _boom)
     monkeypatch.setattr(_platform, "_process_exists_windows", lambda pid: True)
     assert _platform.process_exists(1234) is True
+
+
+def test_kill_pid_windows_uses_sigterm_not_sigkill(monkeypatch):
+    # signal.SIGKILL does not exist on Windows; kill_pid(hard=True) must use
+    # SIGTERM (os.kill→TerminateProcess) and never reference SIGKILL.
+    import signal as _signal
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    calls = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    _platform.kill_pid(4321, hard=True)  # "hard" must not raise on Windows
+    assert calls == [(4321, _signal.SIGTERM)]
+
+
+def test_kill_pid_posix_escalates_to_sigkill(monkeypatch):
+    import signal as _signal
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    calls = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    _platform.kill_pid(11, hard=False)
+    _platform.kill_pid(11, hard=True)
+    assert calls == [(11, _signal.SIGTERM), (11, _signal.SIGKILL)]
