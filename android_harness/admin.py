@@ -74,7 +74,7 @@ def cleanup_stale(name=None):
 
     cleaned = False
     try:
-        recorded = int(pid_path.read_text().strip())
+        recorded = int(pid_path.read_text(encoding="utf-8").strip())
     except (FileNotFoundError, ValueError, UnicodeDecodeError, PermissionError, OSError):
         recorded = None
 
@@ -161,7 +161,7 @@ def ensure_daemon(wait=30.0, name=None, env=None):
 def _log_tail(name=None, n=30):
     p = ipc.log_path(name or NAME)
     try:
-        return "\n".join(p.read_text().splitlines()[-n:])
+        return "\n".join(p.read_text(encoding="utf-8").splitlines()[-n:])
     except FileNotFoundError:
         return ""
 
@@ -316,7 +316,7 @@ def _check_env_file():
     found = next((p for p in candidates if p.exists()), None)
     if found is None:
         return False, "no .env at repo root or agent-workspace/"
-    text = found.read_text()
+    text = found.read_text(encoding="utf-8")
     missing = []
     for key in ANDROID_REQUIRED_ENV:
         ok = False

@@ -17,7 +17,9 @@ def _stub_os_release(monkeypatch, contents: str):
     real_read = Path.read_text
 
     def fake_read(self, *a, **kw):
-        if str(self) == "/etc/os-release":
+        # as_posix() so the match holds on Windows too, where
+        # str(WindowsPath('/etc/os-release')) is '\\etc\\os-release'.
+        if self.as_posix() == "/etc/os-release":
             return contents
         return real_read(self, *a, **kw)
     monkeypatch.setattr(Path, "read_text", fake_read)
@@ -95,13 +97,13 @@ def test_sudo_prefix_macos_returns_empty(monkeypatch):
 
 def test_sudo_prefix_linux_root_returns_empty(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_platform.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(_platform.os, "geteuid", lambda: 0, raising=False)
     assert _platform.sudo_prefix() == []
 
 
 def test_sudo_prefix_linux_nonroot_with_sudo(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_platform.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(_platform.os, "geteuid", lambda: 1000, raising=False)
     monkeypatch.setattr(_platform.shutil, "which",
                         lambda c: "/usr/bin/sudo" if c == "sudo" else None)
     assert _platform.sudo_prefix() == ["sudo"]
@@ -109,7 +111,7 @@ def test_sudo_prefix_linux_nonroot_with_sudo(monkeypatch):
 
 def test_sudo_prefix_linux_nonroot_without_sudo(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_platform.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(_platform.os, "geteuid", lambda: 1000, raising=False)
     monkeypatch.setattr(_platform.shutil, "which", lambda c: None)
     assert _platform.sudo_prefix() is None
 
@@ -304,6 +306,7 @@ def test_kill_pid_windows_uses_sigterm_not_sigkill(monkeypatch):
     assert calls == [(4321, _signal.SIGTERM)]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="signal.SIGKILL is POSIX-only; the Windows kill_pid path is covered by test_kill_pid_windows_*")
 def test_kill_pid_posix_escalates_to_sigkill(monkeypatch):
     import signal as _signal
 

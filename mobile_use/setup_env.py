@@ -90,7 +90,7 @@ def parse_env(path):
     if not path.exists():
         return {}
     out = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -244,7 +244,7 @@ def render_env(values, *, ios=True, android=True):
 def write_env(path, values, *, ios=True, android=True):
     """Write the values to `path`. Creates parent dir if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_env(values, ios=ios, android=android))
+    path.write_text(render_env(values, ios=ios, android=android), encoding="utf-8")
 
 
 # ---- CLI entry -------------------------------------------------------------
@@ -305,7 +305,7 @@ def main(argv=None):
         print(text)
         return 0
 
-    target.write_text(text)
+    target.write_text(text, encoding="utf-8")
     print(f"\nWrote {target.relative_to(REPO_ROOT) if target.is_relative_to(REPO_ROOT) else target}")
     if not has_real_value(values, "IPH_UDID") and not has_real_value(values, "ANH_UDID"):
         print("Warning: no device UDIDs set. Re-run after connecting a phone, or edit .env manually.")

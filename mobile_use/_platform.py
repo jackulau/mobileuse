@@ -171,6 +171,25 @@ def kill_pid(pid: int, hard: bool = False) -> None:
         pass
 
 
+def ensure_utf8_streams() -> None:
+    """Force stdout/stderr to UTF-8 so non-ASCII output doesn't crash the CLI.
+
+    Help/doctor text uses arrows ('→'), box-drawing, and check marks. A Windows
+    console defaults stdout to a legacy code page (cp1252) that cannot encode
+    '→' (U+2192) → UnicodeEncodeError → the CLI exits non-zero and prints
+    nothing. Reconfiguring to UTF-8 with errors='replace' makes every entry
+    point emit consistent UTF-8 on all platforms. No-op where reconfigure is
+    unavailable (e.g. a captured/replaced stream under pytest)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def linux_pkg_manager():
     """Return 'apt' | 'dnf' | 'pacman' | 'zypper' | 'apk' | None.
 
@@ -188,7 +207,7 @@ def linux_pkg_manager():
 
     ids = set()
     try:
-        for line in Path("/etc/os-release").read_text().splitlines():
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
             if "=" not in line:
                 continue
             k, v = line.split("=", 1)

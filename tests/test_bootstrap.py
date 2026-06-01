@@ -115,7 +115,7 @@ def test_linux_pkg_manager_detects_ubuntu(monkeypatch, tmp_path):
     # Use unittest.mock on Path.read_text via a wrapper.
     real_read = bootstrap.Path.read_text
     def fake_read(self, *a, **kw):
-        if str(self) == "/etc/os-release":
+        if self.as_posix() == "/etc/os-release":
             return 'ID=ubuntu\nID_LIKE=debian\n'
         return real_read(self, *a, **kw)
     monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)
@@ -127,7 +127,7 @@ def test_linux_pkg_manager_detects_fedora(monkeypatch):
     monkeypatch.setattr(bootstrap.sys, "platform", "linux")
     real_read = bootstrap.Path.read_text
     def fake_read(self, *a, **kw):
-        if str(self) == "/etc/os-release":
+        if self.as_posix() == "/etc/os-release":
             return 'ID=fedora\n'
         return real_read(self, *a, **kw)
     monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)
@@ -139,7 +139,7 @@ def test_linux_pkg_manager_detects_arch(monkeypatch):
     monkeypatch.setattr(bootstrap.sys, "platform", "linux")
     real_read = bootstrap.Path.read_text
     def fake_read(self, *a, **kw):
-        if str(self) == "/etc/os-release":
+        if self.as_posix() == "/etc/os-release":
             return 'ID=arch\n'
         return real_read(self, *a, **kw)
     monkeypatch.setattr(bootstrap.Path, "read_text", fake_read)

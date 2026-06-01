@@ -40,6 +40,9 @@ Optional:
 
 
 def main():
+    from mobile_use._platform import ensure_utf8_streams
+    ensure_utf8_streams()  # Windows cp1252 console can't encode '→'/box chars → crash
+
     args = sys.argv[1:]
     if not args or args[0] in {"-h", "--help"}:
         print(HELP)

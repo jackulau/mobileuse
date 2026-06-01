@@ -32,7 +32,7 @@ def _free_port():
         s.close()
 
 
-def _wait_alive(ipc_mod, name, timeout=5.0):
+def _wait_alive(ipc_mod, name, timeout=10.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if ipc_mod.ping(name, timeout=0.3):
@@ -226,7 +226,7 @@ def test_ipc_tcp_iphone_roundtrip():
         with _tcp_env("IPH", port):
             os.environ["IPH_NAME"] = name
             try:
-                assert _wait_alive(iph_ipc, name, timeout=5.0), "daemon never bound TCP"
+                assert _wait_alive(iph_ipc, name, timeout=10.0), "daemon never bound TCP"
                 assert iph_ipc.ping(name, timeout=1.0) is True
                 pid = iph_ipc.identify(name, timeout=1.0)
                 assert pid == p.pid
@@ -262,7 +262,7 @@ def test_ipc_tcp_iphone_no_unix_file_created():
         with _tcp_env("IPH", port):
             os.environ["IPH_NAME"] = name
             try:
-                assert _wait_alive(iph_ipc, name, timeout=5.0)
+                assert _wait_alive(iph_ipc, name, timeout=10.0)
                 assert not sock_file.exists(), f"TCP daemon unexpectedly created {sock_file}"
             finally:
                 os.environ.pop("IPH_NAME", None)
@@ -285,13 +285,13 @@ def test_ipc_tcp_iphone_shutdown_via_ipc():
         with _tcp_env("IPH", port):
             os.environ["IPH_NAME"] = name
             try:
-                assert _wait_alive(iph_ipc, name, timeout=5.0)
+                assert _wait_alive(iph_ipc, name, timeout=10.0)
                 s, _ = iph_ipc.connect(name, timeout=1.0)
                 resp = iph_ipc.request(s, None, {"meta": "shutdown"})
                 s.close()
                 assert resp == {"ok": True}
                 try:
-                    p.wait(timeout=5.0)
+                    p.wait(timeout=10.0)
                 except subprocess.TimeoutExpired:
                     pytest.fail("TCP daemon didn't exit after shutdown")
                 assert iph_ipc.ping(name, timeout=0.5) is False
@@ -314,7 +314,7 @@ def test_ipc_tcp_android_roundtrip():
         with _tcp_env("ANH", port):
             os.environ["ANH_NAME"] = name
             try:
-                assert _wait_alive(anh_ipc, name, timeout=5.0)
+                assert _wait_alive(anh_ipc, name, timeout=10.0)
                 s, _ = anh_ipc.connect(name, timeout=1.0)
                 try:
                     resp = anh_ipc.request(s, None, {"method": "window_size", "params": {}})

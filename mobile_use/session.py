@@ -24,7 +24,7 @@ class Session:
     def _load(self):
         if self.path.exists():
             try:
-                return json.loads(self.path.read_text())
+                return json.loads(self.path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
         return {
@@ -46,7 +46,7 @@ class Session:
         self._state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
         if self.platform:
             self._state["platform"] = self.platform
-        self.path.write_text(json.dumps(self._state, indent=2, default=str))
+        self.path.write_text(json.dumps(self._state, indent=2, default=str), encoding="utf-8")
 
     @property
     def current_app(self):

@@ -3,6 +3,7 @@
 No real device or Xcode required. Mocks provisioning profile reads and project
 filesystem lookups.
 """
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -164,6 +165,7 @@ def test_check_wda_built_returns_false_when_no_derived_data(tmp_path, monkeypatc
     assert "DerivedData" in detail or "not on macOS" in detail
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="WebDriverAgent/Xcode is macOS-only; iOS-from-Windows uses a remote Mac bridge (non-goal)")
 def test_check_wda_built_returns_false_when_no_app(tmp_path, monkeypatch):
     monkeypatch.setattr(ios_wda.sys, "platform", "darwin")
     derived = tmp_path / "Library/Developer/Xcode/DerivedData"
@@ -174,6 +176,7 @@ def test_check_wda_built_returns_false_when_no_app(tmp_path, monkeypatch):
     assert "no WebDriverAgentRunner-Runner.app" in detail
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="WebDriverAgent/Xcode is macOS-only; iOS-from-Windows uses a remote Mac bridge (non-goal)")
 def test_check_wda_built_returns_true_when_app_present(tmp_path, monkeypatch):
     monkeypatch.setattr(ios_wda.sys, "platform", "darwin")
     monkeypatch.setenv("HOME", str(tmp_path))

@@ -21,6 +21,11 @@ from iphone_harness import admin as iph_admin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+_skip_win = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="AF_UNIX socket-file lifecycle — Windows uses TCP loopback (no socket file); TCP lifecycle is covered by test_ipc_tcp.py",
+)
+
 
 def _wait_alive(ipc_mod, name, timeout=5.0):
     deadline = time.time() + timeout
@@ -164,6 +169,7 @@ def test_restart_daemon_cleans_pid_file(iph_name):
 
 # ---- stale file handling --------------------------------------------------
 
+@_skip_win
 def test_stale_socket_file_does_not_block_new_daemon(iph_name):
     """Leftover .sock from a hard-killed daemon should be cleaned on new spawn."""
     sock_path = Path(iph_ipc.sock_addr(iph_name))
@@ -194,6 +200,7 @@ def test_stale_pid_file_does_not_block_new_daemon(iph_name):
         _wait_dead(iph_ipc, iph_name, timeout=5.0)
 
 
+@_skip_win
 def test_stale_socket_does_not_respond_to_ping(iph_name):
     """A leftover socket file that no daemon is bound to should ping=False."""
     sock_path = Path(iph_ipc.sock_addr(iph_name))
@@ -203,6 +210,7 @@ def test_stale_socket_does_not_respond_to_ping(iph_name):
     assert iph_ipc.ping(iph_name, timeout=0.5) is False
 
 
+@_skip_win
 def test_cleanup_stale_removes_dead_pid_and_socket(iph_name):
     """cleanup_stale() should drop .pid (dead pid) and .sock (no listener)."""
     pid_path = Path(iph_ipc.pid_path(iph_name))
@@ -217,6 +225,7 @@ def test_cleanup_stale_removes_dead_pid_and_socket(iph_name):
     assert not sock_path.exists()
 
 
+@_skip_win
 def test_cleanup_stale_preserves_live_daemon_files(iph_name):
     """cleanup_stale() must NOT wipe files of a live daemon."""
     p = _spawn_mock("iphone", iph_name)
@@ -252,6 +261,7 @@ def test_cleanup_stale_no_op_when_no_files(iph_name):
     assert result is False
 
 
+@_skip_win
 def test_android_cleanup_stale_removes_dead_files(anh_name):
     pid_path = Path(anh_ipc.pid_path(anh_name))
     sock_path = Path(anh_ipc.sock_addr(anh_name))
@@ -329,6 +339,7 @@ def test_android_restart_daemon_kills_alive(anh_name):
             p.wait(timeout=2.0)
 
 
+@_skip_win
 def test_android_stale_socket_cleaned(anh_name):
     sock_path = Path(anh_ipc.sock_addr(anh_name))
     sock_path.write_text("")

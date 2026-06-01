@@ -151,10 +151,10 @@ def export_training_data(output_path, sessions=None, include_tree=True,
         ss_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    with open(output, "w") as out:
+    with open(output, "w", encoding="utf-8") as out:
         for d in sorted(dirs):
             for jsonl_file in sorted(d.glob("*.jsonl")):
-                for line in jsonl_file.read_text().splitlines():
+                for line in jsonl_file.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
                         continue
                     try:
@@ -191,7 +191,7 @@ def training_stats():
             continue
         sessions += 1
         for jsonl_file in d.glob("*.jsonl"):
-            for line in jsonl_file.read_text().splitlines():
+            for line in jsonl_file.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 try:

@@ -247,6 +247,7 @@ def test_invalid_name_rejected_iphone():
         iph_ipc.sock_addr("")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="AF_UNIX socket file — Windows daemon uses TCP loopback (no socket file)")
 def test_socket_file_removed_after_shutdown(iph_name):
     p = _spawn_mock("iphone", iph_name)
     try:
@@ -345,6 +346,7 @@ def test_anh_ipc_caps_oversized_response(anh_daemon, monkeypatch):
             pass
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="AF_UNIX socket file — Windows daemon uses TCP loopback (no socket file)")
 def test_android_iphone_namespaces_separate(iph_name, anh_name):
     """iOS and Android socket namespaces must not collide for the same name."""
     # Same name but different prefixes — should produce different paths.

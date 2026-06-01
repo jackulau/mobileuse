@@ -27,7 +27,7 @@ def _load_env():
 
 
 def _load_env_file(p):
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -657,8 +657,8 @@ if __name__ == "__main__":
     if already_running():
         print(f"daemon already running on {SOCK}", file=sys.stderr)
         sys.exit(0)
-    open(LOG, "w").close()
-    open(PID, "w").write(str(os.getpid()))
+    open(LOG, "w", encoding="utf-8").close()
+    open(PID, "w", encoding="utf-8").write(str(os.getpid()))
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

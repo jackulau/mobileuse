@@ -73,7 +73,7 @@ def _resolve_llm():
 def _count_steps(path: Path) -> int:
     n = 0
     try:
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("h."):
                 n += 1
     except OSError:
@@ -176,7 +176,7 @@ def cmd_show(parsed):
     if not path.exists():
         print(f"Macro not found: {path}", file=sys.stderr)
         return 2
-    print(path.read_text())
+    print(path.read_text(encoding="utf-8"))
     return 0
 
 

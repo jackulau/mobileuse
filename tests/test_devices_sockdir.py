@@ -16,8 +16,9 @@ from iphone_harness import _ipc as iph_ipc
 def test_devices_scans_same_dir_daemon_writes(monkeypatch):
     monkeypatch.setenv("IPH_RUNTIME_DIR", "/tmp/mu-d13-test")
     # devices must look where the iOS daemon actually puts its socket.
-    scanned = [str(d) for d in devices._socket_dirs()]
-    sock = str(iph_ipc._sock_path("x"))
+    # as_posix() so the comparison is separator-agnostic (Windows uses '\\').
+    scanned = [d.as_posix() for d in devices._socket_dirs()]
+    sock = iph_ipc._sock_path("x").as_posix()
     assert any(sock.startswith(d.rstrip("/") + "/") for d in scanned), (
         f"devices scans {scanned} but daemon writes {sock}"
     )
@@ -78,4 +79,5 @@ def test_devices_finds_socket_in_custom_runtime_dir(tmp_path, monkeypatch):
 def test_socket_dirs_dedupes_when_same(monkeypatch):
     monkeypatch.setenv("IPH_RUNTIME_DIR", "/tmp/shared")
     monkeypatch.setenv("ANH_RUNTIME_DIR", "/tmp/shared")
-    assert [str(d) for d in devices._socket_dirs()] == ["/tmp/shared"]
+    # as_posix() so the assertion is separator-agnostic on Windows.
+    assert [d.as_posix() for d in devices._socket_dirs()] == ["/tmp/shared"]

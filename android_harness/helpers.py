@@ -27,7 +27,7 @@ def _load_env():
     for p in (REPO_ROOT / ".env", AGENT_WORKSPACE / ".env"):
         if not p.exists():
             continue
-        for line in p.read_text().splitlines():
+        for line in p.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

@@ -67,7 +67,7 @@ def test_skill_file_keyword(app_id, filename, keywords):
     path = SKILLS_DIR / app_id / filename
     if not path.exists():
         pytest.skip("file absence reported by sibling test")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert any(kw.lower() in text.lower() for kw in keywords), (
         f"{path.name} contains none of expected keywords {keywords}"
     )
@@ -85,7 +85,7 @@ def test_skill_listed_by_domain_resolver(app_id, filename, keywords):
 def test_capability_doc_present():
     p = REPO_ROOT / "docs" / "cleanup-capability.md"
     assert p.exists(), "docs/cleanup-capability.md missing"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     for section in ("## iOS", "## Android", "## Cross-cutting"):
         assert section in text, f"capability doc missing '{section}' section"
 
@@ -108,12 +108,12 @@ def test_demos_present_and_parseable():
     for f in ("clean-and-organize-ios.py", "clean-and-organize-android.py"):
         p = REPO_ROOT / "docs" / "demos" / f
         assert p.exists(), f"missing demo: {p.relative_to(REPO_ROOT)}"
-        ast.parse(p.read_text())  # raises SyntaxError if invalid
+        ast.parse(p.read_text(encoding="utf-8"))  # raises SyntaxError if invalid
 
 
 def test_readme_documents_cleanup():
     p = REPO_ROOT / "README.md"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     assert "Cleaning up" in text or "Cleaning Up" in text, \
         "README has no Cleaning up section"
     assert "cleanup-capability.md" in text, \

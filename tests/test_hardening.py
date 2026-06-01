@@ -354,7 +354,7 @@ def test_bootstrap_sudo_prefix_handles_missing_sudo(monkeypatch):
     """_sudo_prefix returns None on linux without sudo + not root."""
     from mobile_use import bootstrap
     monkeypatch.setattr(bootstrap.sys, "platform", "linux")
-    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 1000, raising=False)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda c: None)
     assert bootstrap._sudo_prefix() is None
 
@@ -362,14 +362,14 @@ def test_bootstrap_sudo_prefix_handles_missing_sudo(monkeypatch):
 def test_bootstrap_sudo_prefix_empty_when_root(monkeypatch):
     from mobile_use import bootstrap
     monkeypatch.setattr(bootstrap.sys, "platform", "linux")
-    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 0, raising=False)
     assert bootstrap._sudo_prefix() == []
 
 
 def test_bootstrap_sudo_prefix_has_sudo(monkeypatch):
     from mobile_use import bootstrap
     monkeypatch.setattr(bootstrap.sys, "platform", "linux")
-    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(bootstrap.os, "geteuid", lambda: 1000, raising=False)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda c: "/usr/bin/sudo")
     assert bootstrap._sudo_prefix() == ["sudo"]
 

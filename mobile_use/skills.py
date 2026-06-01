@@ -34,7 +34,7 @@ def read_skill(app_id, filename):
     p = SKILLS_DIR / app_id / filename
     if not p.exists():
         return None
-    return p.read_text()
+    return p.read_text(encoding="utf-8")
 
 
 def write_skill(app_id, title, content, overwrite=False):
@@ -57,7 +57,7 @@ def write_skill(app_id, title, content, overwrite=False):
     path = d / filename
 
     if path.exists() and not overwrite:
-        existing = path.read_text()
+        existing = path.read_text(encoding="utf-8")
         if _content_similar(existing, content):
             return str(path)
         i = 2
@@ -65,7 +65,7 @@ def write_skill(app_id, title, content, overwrite=False):
             i += 1
         path = d / f"{slug}-{i}.md"
 
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     return str(path)
 
 
@@ -89,13 +89,13 @@ def merge_skill(app_id, filename, new_content):
     if not p.exists():
         return write_skill(app_id, filename.replace(".md", ""), new_content)
 
-    existing = p.read_text()
+    existing = p.read_text(encoding="utf-8")
     if new_content.strip() in existing:
         return str(p)
 
     timestamp = time.strftime("%Y-%m-%d %H:%M")
     merged = f"{existing.rstrip()}\n\n## Update ({timestamp})\n\n{new_content}\n"
-    p.write_text(merged)
+    p.write_text(merged, encoding="utf-8")
     return str(p)
 
 

@@ -207,11 +207,11 @@ def stop_recording() -> str:
     journal = _state["journal"]
     script = _generate_script(journal, helpers.__name__)
     out = _state["output_path"]
-    Path(out).write_text(script)
+    Path(out).write_text(script, encoding="utf-8")
 
     if any("intent" in e for e in journal):
         sidecar = Path(out).with_suffix(Path(out).suffix + ".jsonl")
-        with sidecar.open("w") as f:
+        with sidecar.open("w", encoding="utf-8") as f:
             for entry in journal:
                 f.write(json.dumps(entry) + "\n")
 
@@ -358,7 +358,7 @@ def replay(script_path: str, helpers=None):
     path = Path(script_path)
     if not path.exists():
         raise FileNotFoundError(f"replay script not found: {script_path}")
-    code = path.read_text()
+    code = path.read_text(encoding="utf-8")
     ns: dict[str, Any] = {"__name__": "__replay__"}
     if helpers is not None:
         ns["h"] = helpers
@@ -419,7 +419,7 @@ def _load_journal(script_path: str) -> list[dict]:
     if not sidecar.exists():
         return []
     out = []
-    for line in sidecar.read_text().splitlines():
+    for line in sidecar.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
