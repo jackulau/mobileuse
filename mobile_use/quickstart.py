@@ -21,7 +21,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from mobile_use._platform import is_linux, is_macos
+from mobile_use._platform import default_runtime_base, is_linux, is_macos
 
 APPIUM_URL = os.environ.get("IPH_APPIUM_URL") or os.environ.get("ANH_APPIUM_URL") or "http://127.0.0.1:4723"
 
@@ -64,13 +64,21 @@ def run_appium_phase(*, autostart=False):
         )
 
     # Try to start it. Detach so we don't block on its lifetime.
-    log_path = os.path.join("/tmp", "mobile-use-appium.log")
+    # default_runtime_base() is the short POSIX temp dir on Unix and a
+    # Windows-writable dir on win32 (never a bogus drive-root path).
+    # spawn_kwargs() detaches correctly per platform (setsid on POSIX,
+    # DETACHED_PROCESS on Windows — start_new_session is a no-op there).
+    from iphone_harness._ipc import spawn_kwargs
+
+    base = default_runtime_base()
+    os.makedirs(base, exist_ok=True)
+    log_path = os.path.join(base, "mobile-use-appium.log")
     try:
         with open(log_path, "ab") as log:
             subprocess.Popen(
                 [appium_cli, "--base-path", "/"],
                 stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                start_new_session=True,
+                **spawn_kwargs(),
             )
     except Exception as e:
         return False, f"failed to start Appium: {e}"
