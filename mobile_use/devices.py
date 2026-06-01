@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mobile_use._platform import default_runtime_base
+
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -194,9 +196,13 @@ def _socket_dirs():
     RUNTIME_DIR would otherwise be missed entirely — both made `devices
     status/reload/view` report "No named daemons running" against live daemons.
     Resolved dynamically (per call) so it tracks the current environment.
+    The fallback is _platform.default_runtime_base() — '/tmp' on POSIX (matching
+    the daemons) and a Windows-writable dir on win32 (where the daemons also
+    resolve their pid/runtime files), so discovery never scans the wrong drive.
     """
-    ios = os.environ.get("IPH_RUNTIME_DIR") or os.environ.get("IPH_TMP_DIR") or "/tmp"
-    anh = os.environ.get("ANH_RUNTIME_DIR") or os.environ.get("ANH_TMP_DIR") or "/tmp"
+    base = default_runtime_base()
+    ios = os.environ.get("IPH_RUNTIME_DIR") or os.environ.get("IPH_TMP_DIR") or base
+    anh = os.environ.get("ANH_RUNTIME_DIR") or os.environ.get("ANH_TMP_DIR") or base
     seen, dirs = set(), []
     for d in (ios, anh):
         if d not in seen:
@@ -205,31 +211,61 @@ def _socket_dirs():
     return dirs
 
 
+def _daemon_endpoint_str(platform, name):
+    """Human-readable endpoint for a daemon known only by its pid file.
+
+    On Windows the default transport is TCP loopback, so there is no .sock path
+    to display — derive the bind endpoint (tcp://127.0.0.1:<port>) from the
+    harness's own resolution instead. Best-effort; returns "" on any error."""
+    try:
+        if platform == "ios":
+            from iphone_harness import _ipc as ipc
+        else:
+            from android_harness import _ipc as ipc
+        return ipc.sock_addr(name if name is not None else "default")
+    except Exception:
+        return ""
+
+
 def list_running_daemons():
-    """Scan the daemons' socket dirs for active named daemons.
+    """Enumerate active named daemons across the daemons' runtime dirs.
+
+    Scans for BOTH the unix socket files (POSIX default transport) AND the pid
+    files. The pid file is always written and is the ONLY on-disk marker on
+    Windows, where the default transport is TCP loopback and no .sock exists —
+    a .sock-only scan reported "No named daemons running" against live Windows
+    daemons. Deduped by (platform, name) so a POSIX daemon with both a .sock and
+    a .pid isn't listed twice.
 
     Returns list of {"platform": "ios"|"android", "name": str|None, "alive": bool,
-    "socket": str}. `name=None` is the default (unnamed) daemon.
+    "socket": str}. `name=None` is the default (unnamed) daemon. The "socket"
+    field is the .sock path when present, else the resolved endpoint (a tcp://
+    uri on Windows).
     """
-    out = []
-    seen_socks = set()
+    pat = re.compile(r"^(iph|anh)(?:-([A-Za-z0-9_-]{1,64}))?\.(sock|pid)$")
+    found = {}  # (platform, name) -> socket/endpoint string (.sock path wins)
     for sd in _socket_dirs():
         try:
             entries = list(sd.iterdir())
         except OSError:
             continue
         for p in entries:
-            m = re.match(r"^(iph|anh)(?:-([A-Za-z0-9_-]{1,64}))?\.sock$", p.name)
+            m = pat.match(p.name)
             if not m:
                 continue
-            key = str(p)
-            if key in seen_socks:
-                continue
-            seen_socks.add(key)
-            prefix, name = m.group(1), m.group(2)
+            prefix, name, ext = m.group(1), m.group(2), m.group(3)
             platform = "ios" if prefix == "iph" else "android"
-            alive = _probe_daemon(platform, name)
-            out.append({"platform": platform, "name": name, "alive": alive, "socket": str(p)})
+            key = (platform, name)
+            if ext == "sock":
+                found[key] = str(p)  # prefer the real socket path for display
+            elif key not in found:
+                found[key] = _daemon_endpoint_str(platform, name)
+    out = []
+    for (platform, name), endpoint in found.items():
+        out.append({
+            "platform": platform, "name": name,
+            "alive": _probe_daemon(platform, name), "socket": endpoint,
+        })
     return out
 
 
