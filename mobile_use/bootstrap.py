@@ -104,6 +104,14 @@ def _brew_has(pkg):
 
 
 def _appium_driver_installed(name):
+    # Test seam: pin the result so `bootstrap --dry-run` is deterministic
+    # run-to-run. The live `appium driver list` probe has a 10s timeout and can
+    # intermittently time out under heavy concurrent load, flipping the dry-run
+    # plan (OK <-> "would install"). MOBILE_USE_FAKE_APPIUM_DRIVERS = comma-list
+    # of installed driver names (empty string = none installed).
+    fake = os.environ.get("MOBILE_USE_FAKE_APPIUM_DRIVERS")
+    if fake is not None:
+        return name in [d for d in fake.split(",") if d]
     if not _have("appium"):
         return False
     try:

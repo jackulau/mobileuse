@@ -93,8 +93,13 @@ def test_exec_syntax_error_clean_message():
 # ---- bootstrap idempotency ------------------------------------------------
 
 def test_bootstrap_dry_run_twice_produces_same_plan():
-    rc1, out1, _ = _run_cli("bootstrap", "--dry-run")
-    rc2, out2, _ = _run_cli("bootstrap", "--dry-run")
+    # Pin the live appium-driver probe so the plan is deterministic run-to-run.
+    # The real `appium driver list` is slow (10s timeout) and can intermittently
+    # time out under heavy concurrent load, flipping the plan and flaking this
+    # test. See bootstrap._appium_driver_installed (MOBILE_USE_FAKE_APPIUM_DRIVERS).
+    env = {"MOBILE_USE_FAKE_APPIUM_DRIVERS": ""}
+    rc1, out1, _ = _run_cli("bootstrap", "--dry-run", env=env)
+    rc2, out2, _ = _run_cli("bootstrap", "--dry-run", env=env)
     assert rc1 == rc2
     # The numbered steps + their statuses should be identical run-to-run.
     norm = lambda s: "\n".join(l for l in s.splitlines() if l.startswith("["))
