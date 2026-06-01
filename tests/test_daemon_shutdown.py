@@ -52,3 +52,16 @@ def test_start_registers_sigterm_handler(mod_name):
     assert "add_signal_handler" in src and "SIGTERM" in src, (
         "start() must route SIGTERM through the graceful stop path"
     )
+
+
+@pytest.mark.parametrize("admin_name", ["iphone_harness.admin", "android_harness.admin"])
+def test_restart_daemon_uses_windows_safe_kill(admin_name):
+    """restart_daemon must terminate via the Windows-safe _platform.kill_pid —
+    never a direct signal.SIGKILL (AttributeError on Windows) or os.kill (which
+    maps to TerminateProcess on Windows). Locks the delegation so a future edit
+    can't reintroduce the win32-fatal teardown in either harness twin."""
+    admin = importlib.import_module(admin_name)
+    src = inspect.getsource(admin.restart_daemon)
+    assert "kill_pid" in src, "teardown must delegate to _platform.kill_pid"
+    assert "SIGKILL" not in src, "no direct signal.SIGKILL (absent on Windows)"
+    assert "os.kill" not in src, "no direct os.kill (TerminateProcess on Windows)"

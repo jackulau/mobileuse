@@ -46,6 +46,26 @@ def test_pid_alive_accepts_self_pid():
     assert anh_admin._pid_alive(os.getpid()) is True
 
 
+@pytest.mark.parametrize("admin_mod", [iph_admin, anh_admin])
+def test_pid_alive_never_calls_os_kill_on_windows(admin_mod, monkeypatch):
+    """On Windows os.kill(pid, 0) maps to TerminateProcess and would KILL the
+    pid being probed. _pid_alive must delegate to the Win32-safe path and never
+    touch os.kill on win32."""
+    import os
+    import sys
+
+    from mobile_use import _platform
+
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def _boom(*a, **k):
+        raise AssertionError("os.kill must NOT be called on Windows")
+
+    monkeypatch.setattr(os, "kill", _boom)
+    monkeypatch.setattr(_platform, "_process_exists_windows", lambda pid: True)
+    assert admin_mod._pid_alive(12345) is True
+
+
 # ---- cleanup_stale tolerates corrupt PID files ----------------------------
 
 def test_iph_cleanup_stale_handles_binary_garbage_pid(tmp_path, monkeypatch):
