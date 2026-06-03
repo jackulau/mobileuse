@@ -107,6 +107,41 @@ def _apply_extra_caps(o, env_var):
         o.set_capability(k, v)
 
 
+def _valid_http_url(url):
+    """True if ``url`` is a well-formed http(s) URL with a host.
+
+    Guards IPH_WDA_URL so a typo (e.g. a bare IP, an ssh:// URI, or "8100")
+    can't silently produce a broken appium:webDriverAgentUrl that fails the
+    session create with an opaque error.
+    """
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url or "")
+        return p.scheme in ("http", "https") and bool(p.netloc)
+    except Exception:
+        return False
+
+
+def _ios_tunnel_note(platform_version):
+    """Reminder string about the iOS 17+ RemoteXPC tunnel, or None when N/A.
+
+    On iOS >= 17 Apple's RemoteXPC replaced lockdownd, so Appium can only reach
+    WebDriverAgent through a tunnel — its bundled appium-ios-remotexpc, or an
+    external ``sudo pymobiledevice3 remote tunneld`` — over USB *or* Wi-Fi.
+    Without it, session create fails with RSDRequired / InvalidServiceError.
+    When the target version is unknown we emit a softer "if 17+..." hint.
+    """
+    from mobile_use.versions import ios_needs_tunnel
+    if platform_version:
+        if ios_needs_tunnel(platform_version):
+            return ("iOS >= 17 needs the RemoteXPC tunnel running (Appium's bundled "
+                    "appium-ios-remotexpc, or `sudo pymobiledevice3 remote tunneld`) — "
+                    "over USB or Wi-Fi; USB once for the first WDA launch.")
+        return None
+    return ("note: if this iPhone runs iOS 17+, start the RemoteXPC tunnel before "
+            "connecting (set IPH_PLATFORM_VERSION to tune this hint).")
+
+
 def _default_wda_derived_data():
     """Path to a prebuilt WebDriverAgent DerivedData dir, or None.
 
@@ -159,7 +194,24 @@ def _build_options():
     if dd:
         o.set_capability("appium:derivedDataPath", dd)
         o.set_capability("appium:usePrebuiltWDA", True)
+    # Wireless / remote WebDriverAgent. IPH_WDA_URL points Appium at a WDA that is
+    # ALREADY listening — e.g. the iPhone's Wi-Fi IP on :8100 — instead of building
+    # and launching WDA over USB. Appium treats appium:webDriverAgentUrl as "WDA is
+    # up here, skip the build/launch phase". The device still needs WDA installed
+    # + running (USB once), and on iOS 17+ a RemoteXPC tunnel must be up (see note).
+    # Read at call time (like IPH_CAPS) so it's runtime-overridable + testable.
+    wda_url = os.environ.get("IPH_WDA_URL")
+    if wda_url:
+        if _valid_http_url(wda_url):
+            o.set_capability("appium:webDriverAgentUrl", wda_url)
+            log(f"wireless: attaching to WebDriverAgent at {wda_url} (appium:webDriverAgentUrl)")
+            note = _ios_tunnel_note(PLATFORM_VERSION)
+            if note:
+                log(note)
+        else:
+            log(f"IPH_WDA_URL ignored — not a valid http(s) URL: {wda_url!r}")
     # Arbitrary per-deployment cap overrides (device farms, new-OS quirks, etc.).
+    # Merged LAST so IPH_CAPS can still override webDriverAgentUrl above if needed.
     _apply_extra_caps(o, "IPH_CAPS")
     return o
 
