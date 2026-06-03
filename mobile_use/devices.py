@@ -118,6 +118,136 @@ def _adb_devices_long():
     return result
 
 
+# ---- adb-over-Wi-Fi --------------------------------------------------------
+
+def _run_adb(args, timeout=10.0):
+    """Run ``adb <args>`` -> ``(ok, output)``.
+
+    ok is False when adb is missing or exits non-zero. Centralized so the Wi-Fi
+    helpers share one implementation tests can monkeypatch in a single place.
+    """
+    adb = _which("adb")
+    if adb is None:
+        return False, "adb not found on PATH (install Android Platform Tools)"
+    try:
+        out = subprocess.check_output(
+            [adb, *args], timeout=timeout, stderr=subprocess.STDOUT
+        ).decode(errors="replace").strip()
+        return True, out
+    except subprocess.CalledProcessError as e:
+        msg = (e.output or b"").decode(errors="replace").strip()
+        return False, msg or f"adb {' '.join(args)} failed (rc={e.returncode})"
+    except Exception as e:
+        return False, f"{e.__class__.__name__}: {e}"
+
+
+def adb_enable_tcpip(port=5555, usb_serial=None, timeout=10.0):
+    """``adb [-s serial] tcpip <port>`` — restart adbd on the device in TCP mode.
+
+    Requires the device on USB at call time (this is the one step Wi-Fi can't
+    bootstrap itself). Returns ``(ok, detail)``.
+    """
+    pre = ["-s", usb_serial] if usb_serial else []
+    return _run_adb(pre + ["tcpip", str(port)], timeout=timeout)
+
+
+def adb_connect(ip, port=5555, timeout=10.0):
+    """``adb connect <ip>:<port>``. Returns ``(ok, detail)``.
+
+    adb exits 0 even when it prints "failed to connect", so success is decided
+    from the message text, not the exit code.
+    """
+    ran, out = _run_adb(["connect", f"{ip}:{port}"], timeout=timeout)
+    if not ran:
+        return False, out
+    low = out.lower()
+    ok = "connected to" in low and not any(w in low for w in ("failed", "cannot", "unable"))
+    return ok, out
+
+
+def adb_disconnect(ip, port=5555, timeout=10.0):
+    """``adb disconnect <ip>:<port>``. Returns ``(ok, detail)``."""
+    return _run_adb(["disconnect", f"{ip}:{port}"], timeout=timeout)
+
+
+ANDROID_WIFI_HELP = """\
+mobile-use android wifi <ip[:port]> — drive an Android device over Wi-Fi (adb-over-TCP).
+
+USAGE:
+  mobile-use android wifi <ip>              tcpip 5555 (over USB) then connect <ip>:5555
+  mobile-use android wifi <ip:port>         use a non-default port
+  mobile-use android wifi <ip> --usb SERIAL pick which USB device to switch (if several)
+  mobile-use android wifi <ip> --disconnect drop the adb-over-Wi-Fi connection
+
+On success it prints the ip:port serial to set as ANH_UDID. The device must be
+USB-connected once so `adb tcpip` can switch it; after that it's wireless.
+"""
+
+
+def android_wifi_main(argv):
+    """`mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N]`."""
+    if not argv or argv[0] in {"-h", "--help"}:
+        print(ANDROID_WIFI_HELP)
+        return 0 if argv else 2
+
+    target = None
+    disconnect = False
+    usb = None
+    port = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--disconnect":
+            disconnect = True
+        elif a == "--usb" and i + 1 < len(argv):
+            usb = argv[i + 1]; i += 1
+        elif a == "--port" and i + 1 < len(argv):
+            try:
+                port = int(argv[i + 1])
+            except ValueError:
+                print(f"invalid --port {argv[i + 1]!r}", file=sys.stderr)
+                return 2
+            i += 1
+        elif not a.startswith("-") and target is None:
+            target = a
+        i += 1
+
+    if not target:
+        print("usage: mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N]",
+              file=sys.stderr)
+        return 2
+
+    from mobile_use.netcheck import parse_host_port
+    try:
+        ip, p = parse_host_port(target, default_port=(port or 5555))
+    except ValueError as e:
+        print(f"bad target {target!r}: {e}", file=sys.stderr)
+        return 2
+
+    if disconnect:
+        ok, detail = adb_disconnect(ip, p)
+        print(detail)
+        return 0 if ok else 1
+
+    # 1) Switch the USB-connected device into TCP mode. Best-effort: it may
+    #    already be in tcpip mode from a prior run, so a failure here is not fatal
+    #    — we still try to connect.
+    _ran, detail = adb_enable_tcpip(port=p, usb_serial=usb)
+    print(f"adb tcpip {p}: {detail}")
+    # 2) Connect over the network.
+    ok, detail = adb_connect(ip, p)
+    print(f"adb connect {ip}:{p}: {detail}")
+    if not ok:
+        print("\nCould not connect. Checklist:\n"
+              "  - device + this host on the SAME Wi-Fi network\n"
+              "  - device USB-connected once so `adb tcpip` could switch it (re-run on USB)\n"
+              "  - the adb TCP port isn't firewalled")
+        return 1
+    print(f"\nConnected over Wi-Fi. Set this serial:\n  ANH_UDID={ip}:{p}\n"
+          "  (add it to .env, or `mobile-use init` after the device is reachable)")
+    return 0
+
+
 def discover_connected():
     """Return a list of discovered devices.
 
@@ -142,9 +272,11 @@ def discover_connected():
             continue
         out.append({"platform": "ios", "udid": udid, "name": sim_name, "simulator": True})
 
+    from mobile_use.netcheck import looks_like_wifi_serial
     for i, (serial, model) in enumerate(_adb_devices_long(), start=1):
         name = model or f"android-{i}"
-        out.append({"platform": "android", "udid": serial, "name": name})
+        transport = "wifi" if looks_like_wifi_serial(serial) else "usb"
+        out.append({"platform": "android", "udid": serial, "name": name, "transport": transport})
 
     for entry in out:
         base = entry["name"]
@@ -349,8 +481,8 @@ def _cmd_list(args):
         for h in discovery_hints():
             print(f"  hint: {h}")
         return 0
-    rows = [(d["platform"], d["name"], d["udid"]) for d in devices]
-    print(_format_table(rows, ["PLATFORM", "NAME", "UDID"]))
+    rows = [(d["platform"], d["name"], d.get("transport", "usb"), d["udid"]) for d in devices]
+    print(_format_table(rows, ["PLATFORM", "NAME", "TRANSPORT", "UDID"]))
     return 0
 
 

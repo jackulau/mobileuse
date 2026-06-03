@@ -289,6 +289,7 @@ DIAGNOSE:
 SETUP & MAINTENANCE:
   mobile-use ios sign-wda [--check]    re-sign WebDriverAgent (iOS #1 blocker)
   mobile-use ios build-wda [--check]   build WebDriverAgent test target (iOS first-run)
+  mobile-use android wifi <ip>         drive Android over Wi-Fi (adb tcpip + connect)
   mobile-use --reload                  nuke daemon (kills stale state)
   mobile-use --ios --reload            iOS daemon only
   mobile-use --android --reload        Android daemon only
@@ -459,6 +460,21 @@ def main():
             from . import ios_wda
             sys.exit(ios_wda.build_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use ios` action: {remaining[1]!r}. Try `mobile-use ios --help`.")
+
+    # android <action> — Android-specific subcommands.
+    if remaining and remaining[0] == "android":
+        if len(remaining) < 2 or remaining[1] in {"-h", "--help"}:
+            print(
+                "mobile-use android — Android-specific subcommands:\n\n"
+                "  wifi <ip[:port]>      Drive the device over Wi-Fi (adb tcpip + adb connect).\n"
+                "                        Prints the ip:port serial to set as ANH_UDID.\n"
+                "                        Add --disconnect to drop the wireless connection.\n"
+            )
+            sys.exit(0 if len(remaining) >= 2 else 2)
+        if remaining[1] == "wifi":
+            from . import devices as _devices
+            sys.exit(_devices.android_wifi_main(remaining[2:]))
+        sys.exit(f"Unknown `mobile-use android` action: {remaining[1]!r}. Try `mobile-use android --help`.")
 
     # macro <subcmd> — record/replay action sequences (literal + smart)
     if remaining and remaining[0] == "macro":
