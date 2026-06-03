@@ -28,7 +28,10 @@ References
 * xcuitest-driver >= 10 requires Appium 3; >= 4 requires Appium 2.
 * Appium drivers target roughly the latest two major OS versions.
 """
+import json
+import os
 import re
+import subprocess
 
 # --- Support matrix (single source of truth) --------------------------------
 # "major" = the marketing/SDK major number we key everything off of. Ranges are
@@ -206,4 +209,101 @@ def support_matrix_text():
     lines = ["Supported versions:"]
     for comp, supported, notes in rows:
         lines.append(f"  {comp.ljust(w0)}  {supported.ljust(w1)}  {notes}")
+    return "\n".join(lines)
+
+
+# --- Installed-toolchain detection ------------------------------------------
+# These shell out to the `appium` CLI. Both honor a FAKE seam so tests (and the
+# deterministic `bootstrap --dry-run` plan) never depend on a live install:
+#   MOBILE_USE_FAKE_APPIUM_VERSION="3.0.1"            ("" => not installed)
+#   MOBILE_USE_FAKE_DRIVER_VERSIONS="xcuitest=7.0.1,uiautomator2=3.1.0"
+# Live probes swallow every error and return None — version reporting must never
+# break doctor, and "unknown" is always a safe answer.
+
+def appium_version():
+    """Installed Appium *server* version (e.g. "3.0.1"), or None if absent."""
+    fake = os.environ.get("MOBILE_USE_FAKE_APPIUM_VERSION")
+    if fake is not None:
+        return fake or None
+    try:
+        out = subprocess.check_output(
+            ["appium", "--version"], timeout=10.0, stderr=subprocess.STDOUT
+        ).decode().strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def installed_driver_version(name):
+    """Installed version of the Appium driver ``name`` (e.g. "xcuitest"), or None.
+
+    Parses ``appium driver list --installed --json`` defensively — the JSON
+    shape has drifted across Appium releases, so we accept a couple of key
+    spellings and tolerate anything unexpected.
+    """
+    fake = os.environ.get("MOBILE_USE_FAKE_DRIVER_VERSIONS")
+    if fake is not None:
+        for pair in fake.split(","):
+            k, _, v = pair.partition("=")
+            if k.strip() == name:
+                return v.strip() or None
+        return None
+    try:
+        out = subprocess.check_output(
+            ["appium", "driver", "list", "--installed", "--json"],
+            timeout=10.0, stderr=subprocess.STDOUT,
+        ).decode()
+        data = json.loads(out)
+        entry = data.get(name) if isinstance(data, dict) else None
+        if isinstance(entry, dict):
+            # Seen as "version" and "installedVersion" across Appium versions.
+            return entry.get("version") or entry.get("installedVersion")
+    except Exception:
+        return None
+    return None
+
+
+def _driver_status(name, version, min_version):
+    """Classify an installed driver version against its minimum. -> (level, msg)."""
+    if version is None:
+        return "info", f"{name} driver not detected — install: appium driver install {name}"
+    nv = normalize_version(version)
+    if not nv:
+        return "info", f"{name} driver version unparseable ({version!r})"
+    padded = (nv + (0, 0, 0))[:3]
+    minstr = ".".join(map(str, min_version))
+    if padded < min_version:
+        return "warn", (
+            f"{name} driver {version} is below the minimum tested ({minstr}) "
+            f"— upgrade: appium driver update {name}"
+        )
+    return "ok", f"{name} driver {version} (>= {minstr})"
+
+
+def check_toolchain_versions():
+    """Compare the installed Appium toolchain to the support matrix.
+
+    Returns a list of ``(level, message)`` where level is "ok" | "warn" | "info".
+    Never raises and never changes a process exit code — it is advisory only,
+    so an out-of-range toolchain warns rather than blocking automation. The
+    driver probe is skipped when Appium itself is absent (nothing to query).
+    """
+    results = []
+    av = appium_version()
+    if av is None:
+        results.append(("info", "Appium not detected — install: npm i -g appium"))
+        return results
+    level, detail = appium_support_status(av)
+    results.append(("ok" if level == SUPPORTED else "warn", detail))
+    results.append(_driver_status("xcuitest", installed_driver_version("xcuitest"), XCUITEST_MIN))
+    results.append(_driver_status("uiautomator2", installed_driver_version("uiautomator2"), UIAUTOMATOR2_MIN))
+    return results
+
+
+def toolchain_summary_text():
+    """Support matrix + detected-toolchain lines, for the doctor output."""
+    lines = [support_matrix_text(), "", "Detected toolchain:"]
+    marks = {"ok": "OK", "warn": "WARN", "info": "--"}
+    for level, msg in check_toolchain_versions():
+        lines.append(f"  [{marks.get(level, '--')}] {msg}")
     return "\n".join(lines)

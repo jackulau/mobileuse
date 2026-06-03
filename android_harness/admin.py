@@ -403,6 +403,14 @@ def _check_screen_unlocked():
 
 def run_doctor():
     print(f"android-harness {_version() or '(dev)'}\n")
+    # Advisory version summary (support matrix + detected toolchain). Informational
+    # only — out-of-range tooling warns here but never flips the doctor exit code.
+    try:
+        from mobile_use.versions import toolchain_summary_text
+        print(toolchain_summary_text())
+        print()
+    except Exception:
+        pass
     rc = 0
 
     adb_hint = install_hint("android-platform-tools", LINUX_ADB_PKGS)

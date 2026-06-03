@@ -472,6 +472,14 @@ def _check_battery():
 def run_doctor():
     """Diagnostic. Prints status of each external dependency. Returns 0 on all-green."""
     print(f"iphone-harness {_version() or '(dev)'}\n")
+    # Advisory version summary (support matrix + detected toolchain). Informational
+    # only — out-of-range tooling warns here but never flips the doctor exit code.
+    try:
+        from mobile_use.versions import toolchain_summary_text
+        print(toolchain_summary_text())
+        print()
+    except Exception:
+        pass
     rc = 0
 
     libimobiledevice_hint = install_hint("libimobiledevice ideviceinstaller", LINUX_LIBIMOBILEDEVICE_PKGS)
