@@ -401,6 +401,12 @@ def _check_screen_unlocked():
         return True, "(skipped — power info unavailable)"
 
 
+def _check_android_wifi_reachable(serial):
+    """Preflight an adb-over-Wi-Fi serial (ip:port). (bool, detail)."""
+    from mobile_use.netcheck import target_reachable
+    return target_reachable(serial, default_port=5555, timeout=2.0)
+
+
 def run_doctor():
     print(f"android-harness {_version() or '(dev)'}\n")
     # Advisory version summary (support matrix + detected toolchain). Informational
@@ -439,6 +445,18 @@ def run_doctor():
         ("Screen wakefulness", _check_screen_unlocked, (),
          "Press power button. Or use wake_device() helper before interacting."),
     ]
+    # Wireless preflight: only when ANH_UDID is an adb-over-Wi-Fi serial (ip:port).
+    # USB serials are opaque ids and skip this — nothing to reach over the network.
+    _serial = os.environ.get("ANH_UDID")
+    if _serial:
+        from mobile_use.netcheck import looks_like_wifi_serial
+        if looks_like_wifi_serial(_serial):
+            checks.append((
+                f"Device reachable over Wi-Fi ({_serial})",
+                _check_android_wifi_reachable, (_serial,),
+                "Run `mobile-use android wifi <ip>` over USB to (re)establish adb-over-Wi-Fi, "
+                "and ensure the device + host share a network.",
+            ))
     total = len(checks) + 2
 
     for i, (label, fn, args, fix) in enumerate(checks, start=1):

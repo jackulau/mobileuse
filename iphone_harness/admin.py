@@ -469,6 +469,12 @@ def _check_battery():
         return True, "(skipped — battery info unavailable)"
 
 
+def _check_wda_url_reachable(url):
+    """Preflight a wireless WebDriverAgent endpoint (IPH_WDA_URL). (bool, detail)."""
+    from mobile_use.netcheck import target_reachable
+    return target_reachable(url, default_port=8100, timeout=2.0)
+
+
 def run_doctor():
     """Diagnostic. Prints status of each external dependency. Returns 0 on all-green."""
     print(f"iphone-harness {_version() or '(dev)'}\n")
@@ -514,6 +520,16 @@ def run_doctor():
         ("Device battery level (>20% recommended)", _check_battery, (),
          "Plug in the iPhone to charge. Low battery causes USB disconnects during long sessions."),
     ]
+    # Wireless preflight: only when IPH_WDA_URL is configured. A configured-but-
+    # unreachable WDA is a real FAIL (it would hang the session create otherwise).
+    _wda_url = os.environ.get("IPH_WDA_URL")
+    if _wda_url:
+        checks.append((
+            f"WebDriverAgent reachable over Wi-Fi ({_wda_url})",
+            _check_wda_url_reachable, (_wda_url,),
+            "Ensure WDA is running on the iPhone and the Mac shares its network. "
+            "On iOS 17+, start the RemoteXPC tunnel first (see `--doctor` version block).",
+        ))
     total = len(checks) + 2
 
     for i, (label, fn, args, fix) in enumerate(checks, start=1):
