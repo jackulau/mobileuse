@@ -205,6 +205,64 @@ On Windows: `Test-NetConnection -ComputerName <mac> -Port 8763`.
 
 ---
 
+# Part A** — Wireless (Wi-Fi) control
+
+Run a phone over Wi-Fi with no cable tethered during automation. Both platforms
+still need a one-time USB step to bootstrap.
+
+## iOS over Wi-Fi (WebDriverAgent on the iPhone's IP)
+
+WebDriverAgent (WDA) is the HTTP server Appium drives. Once it's installed and
+running on the iPhone, its server (default port **8100**) is reachable over Wi-Fi —
+so you can point Appium at `http://<iphone-wifi-ip>:8100` instead of tunneling WDA
+over USB.
+
+1. **First launch over USB.** WDA must be built/installed/launched once via USB
+   (Part A4). Keep a session alive, or set `IPH_WDA_DERIVED_DATA_PATH` so WDA is reused.
+2. **iOS 17+ (incl. iOS 26): start the RemoteXPC tunnel.** Apple moved developer
+   services behind RemoteXPC, so WDA is unreachable — over USB *or* Wi-Fi — until a
+   tunnel is up. Either let Appium's bundled `appium-ios-remotexpc` manage it (the
+   xcuitest driver does this when configured), or run an external tunnel and leave it
+   running:
+   ```bash
+   sudo pymobiledevice3 remote tunneld
+   ```
+   Without a tunnel, session create fails with `RSDRequired` / `InvalidServiceError`.
+   (iOS 16 and earlier use classic lockdownd and need no tunnel.)
+3. **Find the iPhone's Wi-Fi IP.** Settings → Wi-Fi → (i) on the joined network. The
+   iPhone and the Mac/host must be on the same LAN.
+4. **Point mobile-use at it.**
+   ```bash
+   IPH_WDA_URL=http://192.168.1.50:8100      # in .env or exported
+   mobile-use --ios --doctor                 # preflights WDA reachability + the version matrix
+   mobile-use --ios -c 'print(active_app())'
+   ```
+   `IPH_WDA_URL` sets Appium's `appium:webDriverAgentUrl` — it expects WDA to be
+   already listening and skips the build/launch phase. `IPH_CAPS` still merges last,
+   so an explicit `appium:webDriverAgentUrl` there overrides `IPH_WDA_URL`.
+
+If `--doctor` shows "WebDriverAgent reachable over Wi-Fi … not reachable", WDA isn't
+running, the tunnel is down (iOS 17+), or the device left the network — re-launch over
+USB, restart the tunnel, and confirm the same LAN.
+
+## Android over Wi-Fi (adb-over-TCP)
+
+```bash
+# Device connected via USB first (so adb can switch it into TCP mode):
+mobile-use android wifi 192.168.1.42      # adb tcpip 5555 + adb connect 192.168.1.42:5555
+# -> prints: ANH_UDID=192.168.1.42:5555   (you can unplug USB now)
+
+ANH_UDID=192.168.1.42:5555 mobile-use --android -c 'print(active_app())'
+mobile-use android wifi 192.168.1.42 --disconnect    # end the wireless session
+```
+
+`mobile-use devices list` shows a TRANSPORT column so you can tell usb from wifi.
+If `adb connect` fails: device + host must share a Wi-Fi network, the device must have
+been USB-connected for `adb tcpip` to switch it, and the adb TCP port must not be
+firewalled.
+
+---
+
 # Part B — Android Setup
 
 Android setup is significantly simpler than iOS — no signing, no Xcode, no provisioning.

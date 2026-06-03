@@ -359,6 +359,58 @@ mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 --headed -c '...'
 Full walkthrough + security caveat: SETUP.md → "iOS from Windows / Linux
 (remote Mac bridge)".
 
+## Supported versions
+
+`mobile-use` tracks the device-OS and Appium-toolchain versions it's verified against.
+The matrix lives in `mobile_use/versions.py` and is printed by `mobile-use --doctor`:
+
+| Component | Supported | Notes |
+|-----------|-----------|-------|
+| iOS | 15 – 26 | iOS >= 17 needs the RemoteXPC tunnel (USB or Wi-Fi) |
+| Android | 8 – 16 | UiAutomator2; Wi-Fi via `mobile-use android wifi <ip>` |
+| Appium server | >= 2.0.0 | 3.x recommended |
+| xcuitest-driver | >= 5.0.0 | >= 10.0.0 requires Appium 3 |
+| uiautomator2-driver | >= 3.0.0 | Android driver |
+
+A newer OS than the tested max usually works — `--doctor` flags it "untested-newer"
+rather than blocking. The doctor compares your installed Appium + drivers to this matrix
+and **warns (never blocks)** when something is out of range.
+
+**iOS 17+ (incl. iOS 26):** Apple replaced lockdownd with RemoteXPC, so Appium reaches
+WebDriverAgent only through a **tunnel** — Appium's bundled `appium-ios-remotexpc`, or
+`sudo pymobiledevice3 remote tunneld`. This applies over USB *and* Wi-Fi; without it,
+session create fails with `RSDRequired` / `InvalidServiceError`.
+
+## Wireless (Wi-Fi) control
+
+Drive a phone over Wi-Fi — no cable tethered during the run.
+
+**iOS — attach to WebDriverAgent over Wi-Fi.** WDA must be installed + running (USB once),
+and on iOS 17+ the RemoteXPC tunnel must be up. Then point Appium at the iPhone's Wi-Fi IP
+(WDA's default port is 8100):
+
+```bash
+# .env (or export):
+IPH_WDA_URL=http://192.168.1.50:8100
+mobile-use --ios -c 'print(active_app())'
+```
+
+`mobile-use --doctor` preflights `IPH_WDA_URL` reachability before connecting. Under the
+hood this sets Appium's `appium:webDriverAgentUrl`; an `IPH_CAPS` override still wins.
+
+**Android — adb over Wi-Fi.** One command switches a USB-connected device to TCP, connects,
+and prints the serial to use:
+
+```bash
+mobile-use android wifi 192.168.1.42        # adb tcpip 5555 + adb connect
+# -> prints: ANH_UDID=192.168.1.42:5555
+ANH_UDID=192.168.1.42:5555 mobile-use --android -c 'print(active_app())'
+mobile-use android wifi 192.168.1.42 --disconnect   # drop the wireless link
+```
+
+`mobile-use devices list` shows a TRANSPORT column (usb / wifi) per device.
+Full walkthrough incl. the iOS tunnel: SETUP.md → "Wireless (Wi-Fi) control".
+
 ## Skills
 
 ### iOS Interaction Skills
