@@ -9,7 +9,6 @@ import pytest
 
 from mobile_use import devices
 
-
 # ---- _run_adb --------------------------------------------------------------
 
 def test_run_adb_missing_adb(monkeypatch):
