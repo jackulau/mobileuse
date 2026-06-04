@@ -33,6 +33,11 @@ class Collector:
         self._count = 0
         self._screenshots_dir = self._dir / "screenshots"
         self._screenshots_dir.mkdir(exist_ok=True)
+        # Self-labeling detection dataset (B2): one JSONL row per grounded action,
+        # plus a cropped PNG of the labeled element region.
+        self._detections_path = self._dir / f"{self._date}_detections.jsonl"
+        self._crops_dir = self._dir / "crops"
+        self._detection_count = 0
 
     def record(self, screenshot_path=None, ui_tree=None, active_app=None,
                window_size=None, action=None, target_element=None,
@@ -102,6 +107,89 @@ class Collector:
             success=success,
         )
 
+    def record_detection_sample(self, screenshot_path, bbox, label, screen_sig=None,
+                                window_size=None, action=None, active_app=None,
+                                source="ui_tree", save_crop=True):
+        """Record one self-labeled object-detection sample for local-detector training.
+
+        The accessibility tree already gives the element's box + label, so this is
+        a free byproduct of acting — no extra VLM call. ``bbox`` is ``(x, y, w, h)``
+        in the UI tree's *logical-point* space; iOS screenshots come back at the
+        device's *physical-pixel* resolution, so when ``window_size`` is known the
+        box is scaled to pixel space (``scale = image_width / window_width``) and
+        stored as ``bbox`` (the canonical training box), with the original kept as
+        ``bbox_logical``. A cropped PNG of the region is saved when PIL is available.
+        """
+        ts = time.time()
+        event = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "epoch": ts,
+            "session": self.session_name,
+            "platform": self.platform,
+            "type": "detection",
+            "label": label or "",
+            "source": source,
+            "bbox_logical": [float(v) for v in bbox],
+        }
+        if screen_sig:
+            event["screen_sig"] = screen_sig
+        if action is not None:
+            event["action"] = action
+        if active_app is not None:
+            event["active_app"] = active_app
+
+        px_bbox = list(event["bbox_logical"])
+        scale = 1.0
+        if screenshot_path and os.path.exists(screenshot_path):
+            self._screenshots_dir.mkdir(exist_ok=True)
+            basename = f"det-{int(ts * 1000)}.png"
+            dest = self._screenshots_dir / basename
+            shutil.copy2(screenshot_path, dest)
+            event["screenshot"] = str(dest)
+            event["screenshot_hash"] = _file_hash(screenshot_path)
+            scale = _image_scale(screenshot_path, window_size)
+            if scale != 1.0:
+                px_bbox = [v * scale for v in px_bbox]
+            if save_crop:
+                crop = self._save_crop(screenshot_path, px_bbox)
+                if crop:
+                    event["crop"] = str(crop)
+        event["bbox"] = px_bbox          # pixel-space box, consistent with the image
+        event["scale"] = scale
+
+        with open(self._detections_path, "a") as f:
+            f.write(json.dumps(event, default=str) + "\n")
+        self._detection_count += 1
+        return event
+
+    def _save_crop(self, src_png, bbox):
+        """Crop ``bbox`` (pixel space) out of ``src_png`` into the crops dir. None on failure."""
+        try:
+            from PIL import Image
+        except Exception:
+            return None
+        try:
+            x, y, w, h = bbox
+            with Image.open(src_png) as im:
+                x0, y0 = max(0, int(x)), max(0, int(y))
+                x1, y1 = min(im.width, int(x + w)), min(im.height, int(y + h))
+                if x1 <= x0 or y1 <= y0:
+                    return None
+                self._crops_dir.mkdir(exist_ok=True)
+                dest = self._crops_dir / Path(src_png).name.replace(".png", "-crop.png")
+                im.crop((x0, y0, x1, y1)).save(dest)
+                return dest
+        except Exception:
+            return None
+
+    @property
+    def detection_count(self):
+        return self._detection_count
+
+    @property
+    def detections_path(self):
+        return str(self._detections_path)
+
     @property
     def count(self):
         return self._count
@@ -117,6 +205,49 @@ def _file_hash(path, algo="md5"):
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _image_scale(png_path, window_size):
+    """Pixels-per-logical-point ratio: image_width / window_width. 1.0 if unknown.
+
+    iOS screenshots are physical pixels while the UI tree is logical points; on a
+    Retina device this is 2.0 or 3.0. Falls back to 1.0 when PIL is missing or the
+    window size is unavailable (Android coords are already pixel-space -> 1.0).
+    """
+    try:
+        w = (window_size or {}).get("width")
+        if not w:
+            return 1.0
+        from PIL import Image
+        with Image.open(png_path) as im:
+            return im.width / float(w) if w else 1.0
+    except Exception:
+        return 1.0
+
+
+def load_detection_samples(sessions=None):
+    """Load self-labeled detection samples (``*_detections.jsonl``) across sessions.
+
+    Returns a list of event dicts (each with ``bbox``, ``label``, ``screenshot``).
+    Used by the local-detector matcher (B4) and the YOLO trainer (B5).
+    """
+    if not DATA_DIR.exists():
+        return []
+    if sessions:
+        dirs = [DATA_DIR / s for s in sessions if (DATA_DIR / s).exists()]
+    else:
+        dirs = [d for d in DATA_DIR.iterdir() if d.is_dir()]
+    samples = []
+    for d in sorted(dirs):
+        for jsonl_file in sorted(d.glob("*_detections.jsonl")):
+            for line in jsonl_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    samples.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return samples
 
 
 def list_sessions():

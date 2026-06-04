@@ -19,8 +19,13 @@ import sys
 import time
 
 from .collector import Collector
+from .perception_cache import screen_signature
 from .session import Session, load_session
 from .skills import list_skills, skill_template, write_skill
+
+# Action verbs that carry an (x, y) tap point we can map back to a tree element
+# for self-labeling. Center-coordinate gestures only.
+_XY_VERBS = {"tap_at_xy", "tap", "long_press", "double_tap"}
 
 # Curated set of ACTION verbs the LLM agent is allowed to call. This is the
 # agent's action schema — deliberately NOT dir(helpers), which also exposes ~20
@@ -400,8 +405,60 @@ class AgentLoop:
                             "timing": {"perceive_ms": (t1 - t0) * 1e3,
                                        "decide_ms": (t2 - t1) * 1e3,
                                        "act_ms": (t4 - t3) * 1e3}})
+            if "error" not in res:
+                self._maybe_capture_detection(state, fn, action.get("kwargs") or {})
         return {"status": "max_steps", "steps": max_steps, "history": history,
                 "timings": self._finalize_timings(timings)}
+
+    @staticmethod
+    def _match_element(tree, x, y):
+        """Smallest tree element whose box contains (x, y) — the tapped target.
+
+        Smallest-area wins so a tap inside a button nested in a cell labels the
+        button, not the enclosing container.
+        """
+        best, best_area = None, None
+        for el in tree or []:
+            if not isinstance(el, dict):
+                continue
+            ex, ey, ew, eh = el.get("x"), el.get("y"), el.get("w"), el.get("h")
+            if None in (ex, ey, ew, eh):
+                continue
+            if ex <= x <= ex + ew and ey <= y <= ey + eh:
+                area = ew * eh
+                if best_area is None or area < best_area:
+                    best, best_area = el, area
+        return best
+
+    def _maybe_capture_detection(self, state, fn, kwargs):
+        """Self-label the tapped element as a detection sample (free — from the tree).
+
+        Best-effort and fully swallowed: capturing training data must never break
+        the action loop.
+        """
+        if not self.collector or fn not in _XY_VERBS:
+            return
+        x, y = kwargs.get("x"), kwargs.get("y")
+        if x is None or y is None:
+            return
+        el = self._match_element(state.get("ui_tree") or [], x, y)
+        if el is None:
+            return
+        bbox = (el.get("x"), el.get("y"), el.get("w"), el.get("h"))
+        if any(v is None for v in bbox):
+            return
+        label = (el.get("label") or el.get("name") or el.get("text")
+                 or el.get("content_desc") or el.get("type") or "")
+        try:
+            self.collector.record_detection_sample(
+                screenshot_path=state.get("screenshot_path"),
+                bbox=bbox, label=label,
+                screen_sig=screen_signature(state.get("marks"), state.get("active_app")),
+                window_size=state.get("window_size"),
+                action=fn, active_app=state.get("active_app"),
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _accrue(timings, perceive=0.0, decide=0.0, act=0.0):
