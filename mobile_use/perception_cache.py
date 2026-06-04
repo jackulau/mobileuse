@@ -32,11 +32,13 @@ def screen_signature(marks, app=None, quantum=8):
             continue
         cx = m.get("cx") or 0
         cy = m.get("cy") or 0
+        # Floor into fixed grid cells — same cell => same signature. (round() would
+        # straddle cell boundaries, splitting near-identical positions.)
         norm.append((
             str(m.get("label", "")),
             str(m.get("type", "")),
-            int(round(cx / quantum)),
-            int(round(cy / quantum)),
+            int(cx // quantum),
+            int(cy // quantum),
         ))
     norm.sort()
     app_id = ""

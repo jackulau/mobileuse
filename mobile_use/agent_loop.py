@@ -19,7 +19,7 @@ import sys
 import time
 
 from .collector import Collector
-from .perception_cache import screen_signature
+from .perception_cache import PerceptionCache, screen_signature
 from .session import Session, load_session
 from .skills import list_skills, skill_template, write_skill
 
@@ -88,6 +88,11 @@ class AgentLoop:
         self._helpers = None
         self._admin = None
         self._action_stack = []
+        # Perception/action cache: replay the action for a repeated identical
+        # screen and skip the LLM round-trip. On by default; MU_PERCEPTION_CACHE=0
+        # disables it. The LLM is always the fallback, so a stale hit is cheap.
+        self._pcache = PerceptionCache(enabled=os.environ.get("MU_PERCEPTION_CACHE", "1") != "0")
+        self._last_replayed_sig = None
 
     def _load_platform(self):
         """Lazy-load the correct platform module."""
@@ -364,32 +369,50 @@ class AgentLoop:
             raise TypeError("run: llm must be callable(prompt) -> str")
         self.start()
         history = []
+        self._last_replayed_sig = None
         timings = {"perceive_ms": 0.0, "decide_ms": 0.0, "act_ms": 0.0,
-                   "llm_calls": 0, "steps": 0}
+                   "llm_calls": 0, "cache_hits": 0, "steps": 0}
         for step in range(max_steps):
             t0 = time.perf_counter()
             state = self.perceive(marks=True)
             t1 = time.perf_counter()
-            # decide phase = build prompt + the LLM round-trip (the latency hotspot).
-            prompt = self._build_agent_prompt(task, state, history)
-            try:
-                raw = llm(prompt)
-            except Exception as e:
-                self._accrue(timings, perceive=(t1 - t0), decide=(time.perf_counter() - t1))
-                history.append({"step": step, "error": f"llm error: {e}"})
-                break
-            t2 = time.perf_counter()
-            timings["llm_calls"] += 1
-            action = _parse_json_block(raw)
+            # decide phase = (cache lookup OR build prompt + LLM round-trip).
+            sig = screen_signature(state.get("marks"), state.get("active_app"))
+            cached = self._pcache.get(task, step, sig)
+            # Anti-loop: never replay the SAME signature two steps running — a
+            # static screen would otherwise trap the loop. Force the LLM instead.
+            from_cache = cached is not None and sig != self._last_replayed_sig
+            if from_cache:
+                action = cached
+                self._last_replayed_sig = sig
+                timings["cache_hits"] += 1
+                t2 = time.perf_counter()
+            else:
+                prompt = self._build_agent_prompt(task, state, history)
+                try:
+                    raw = llm(prompt)
+                except Exception as e:
+                    self._accrue(timings, perceive=(t1 - t0), decide=(time.perf_counter() - t1))
+                    history.append({"step": step, "error": f"llm error: {e}"})
+                    break
+                t2 = time.perf_counter()
+                timings["llm_calls"] += 1
+                action = _parse_json_block(raw)
+                self._last_replayed_sig = None
             if action is None:
                 self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
                 history.append({"step": step, "error": "unparseable LLM reply",
                                 "raw": str(raw)[:300]})
                 continue
+            # Cache only freshly-decided, valid actions (done or a real fn).
+            if not from_cache and (action.get("done") is True
+                                   or isinstance(action.get("fn"), str)):
+                self._pcache.put(task, step, sig, action)
             if action.get("done") is True:
                 self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
                 return {"status": "done", "steps": step, "reason": action.get("reason"),
-                        "history": history, "timings": self._finalize_timings(timings)}
+                        "history": history, "timings": self._finalize_timings(timings),
+                        "cache": self._pcache.stats}
             fn = action.get("fn")
             if not isinstance(fn, str):
                 self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
@@ -408,7 +431,7 @@ class AgentLoop:
             if "error" not in res:
                 self._maybe_capture_detection(state, fn, action.get("kwargs") or {})
         return {"status": "max_steps", "steps": max_steps, "history": history,
-                "timings": self._finalize_timings(timings)}
+                "timings": self._finalize_timings(timings), "cache": self._pcache.stats}
 
     @staticmethod
     def _match_element(tree, x, y):
