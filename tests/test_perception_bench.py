@@ -47,6 +47,7 @@ def test_local_matcher_recovers_marks_on_treeless_screen(monkeypatch, tmp_path):
     """Empty UI tree + a loaded matcher => perceive() recovers visual marks."""
     cv2 = pytest.importorskip("cv2")
     from PIL import Image
+
     from mobile_use.local_detector import LocalElementMatcher
 
     # A 200x100 screenshot with a distinctive patch at pixel (100,60).

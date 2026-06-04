@@ -338,7 +338,7 @@ def ios_wifi_target(udid=None, host=None, port=WDA_DEFAULT_PORT, probe=True, tim
 
 def _env_path():
     """The .env file to persist into — repo root, else agent-workspace, else default."""
-    from mobile_use.setup_env import DEFAULT_ENV_PATH, ALT_ENV_PATH
+    from mobile_use.setup_env import ALT_ENV_PATH, DEFAULT_ENV_PATH
     if DEFAULT_ENV_PATH.exists():
         return DEFAULT_ENV_PATH
     if ALT_ENV_PATH.exists():

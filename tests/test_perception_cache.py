@@ -11,7 +11,6 @@ import pytest
 from mobile_use.perception_cache import PerceptionCache, screen_signature
 from tests.test_agent_run import _loop
 
-
 # ---- screen_signature -----------------------------------------------------
 
 def test_signature_stable_and_position_quantized():
