@@ -108,36 +108,38 @@ class PerceptionCache:
 def synthetic_benchmark(llm_latency_ms=120.0, steps=10, repeats_same_screen=True):
     """Before/after latency of the decide loop, with vs without the action cache.
 
-    Models the dominant per-step cost — the LLM round-trip — as a sleep, over a
-    stream of screens, and mirrors run()'s anti-consecutive-replay guard. Pure
-    simulation (no device, no real model) so it runs anywhere and quantifies the
-    native speed-up the cache buys on repeated screens.
+    The dominant per-step cost is the LLM round-trip, so latency is *modeled*
+    deterministically as ``llm_calls * llm_latency_ms`` — NOT measured via real
+    ``time.sleep`` (which is wall-clock-flaky under CPU contention and would make
+    this non-reproducible). The cache's win is the reduction in LLM calls, which
+    this counts exactly; the modeled ms is that count times the per-call cost.
+    Mirrors run()'s anti-consecutive-replay guard. Pure + deterministic.
     """
-    def _run(enabled):
+    def _count_llm_calls(enabled):
         cache = PerceptionCache(enabled=enabled, ttl=9_999)
         llm_calls = 0
         last_sig = None
-        t0 = time.perf_counter()
         for step in range(steps):
             sig = "screenA" if repeats_same_screen else f"screen{step}"
             cached = cache.get("task", step, sig)
             if cached is not None and sig != last_sig:
-                last_sig = sig                       # replay — no LLM round-trip
+                last_sig = sig                  # replay — no LLM round-trip
             else:
-                time.sleep(llm_latency_ms / 1000.0)  # the latency hotspot
-                llm_calls += 1
+                llm_calls += 1                  # the latency hotspot fires
                 cache.put("task", step, sig, {"fn": "tap"})
                 last_sig = None
-        return (time.perf_counter() - t0) * 1e3, llm_calls
+        return llm_calls
 
-    base_ms, base_calls = _run(False)
-    cached_ms, cached_calls = _run(True)
+    base_calls = _count_llm_calls(False)
+    cached_calls = _count_llm_calls(True)
+    base_ms = base_calls * llm_latency_ms
+    cached_ms = cached_calls * llm_latency_ms
     return {
         "steps": steps,
         "llm_latency_ms": llm_latency_ms,
         "baseline_ms": round(base_ms, 2),
         "cached_ms": round(cached_ms, 2),
-        "speedup": round(base_ms / cached_ms, 2) if cached_ms else None,
+        "speedup": round(base_calls / cached_calls, 2) if cached_calls else None,
         "llm_calls_baseline": base_calls,
         "llm_calls_cached": cached_calls,
     }
