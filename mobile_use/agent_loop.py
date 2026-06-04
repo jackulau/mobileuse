@@ -359,31 +359,70 @@ class AgentLoop:
             raise TypeError("run: llm must be callable(prompt) -> str")
         self.start()
         history = []
+        timings = {"perceive_ms": 0.0, "decide_ms": 0.0, "act_ms": 0.0,
+                   "llm_calls": 0, "steps": 0}
         for step in range(max_steps):
+            t0 = time.perf_counter()
             state = self.perceive(marks=True)
+            t1 = time.perf_counter()
+            # decide phase = build prompt + the LLM round-trip (the latency hotspot).
             prompt = self._build_agent_prompt(task, state, history)
             try:
                 raw = llm(prompt)
             except Exception as e:
+                self._accrue(timings, perceive=(t1 - t0), decide=(time.perf_counter() - t1))
                 history.append({"step": step, "error": f"llm error: {e}"})
                 break
+            t2 = time.perf_counter()
+            timings["llm_calls"] += 1
             action = _parse_json_block(raw)
             if action is None:
+                self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
                 history.append({"step": step, "error": "unparseable LLM reply",
                                 "raw": str(raw)[:300]})
                 continue
             if action.get("done") is True:
-                return {"status": "done", "steps": step,
-                        "reason": action.get("reason"), "history": history}
+                self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
+                return {"status": "done", "steps": step, "reason": action.get("reason"),
+                        "history": history, "timings": self._finalize_timings(timings)}
             fn = action.get("fn")
             if not isinstance(fn, str):
+                self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
                 history.append({"step": step, "error": "LLM reply missing 'fn'",
                                 "raw": action})
                 continue
+            t3 = time.perf_counter()
             res = self.act(fn, **(action.get("kwargs") or {}))
+            t4 = time.perf_counter()
+            self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1), act=(t4 - t3))
             history.append({"step": step, "action": fn,
-                            "kwargs": action.get("kwargs") or {}, "result": res})
-        return {"status": "max_steps", "steps": max_steps, "history": history}
+                            "kwargs": action.get("kwargs") or {}, "result": res,
+                            "timing": {"perceive_ms": (t1 - t0) * 1e3,
+                                       "decide_ms": (t2 - t1) * 1e3,
+                                       "act_ms": (t4 - t3) * 1e3}})
+        return {"status": "max_steps", "steps": max_steps, "history": history,
+                "timings": self._finalize_timings(timings)}
+
+    @staticmethod
+    def _accrue(timings, perceive=0.0, decide=0.0, act=0.0):
+        """Add one step's phase durations (seconds) into the running totals (ms)."""
+        timings["perceive_ms"] += perceive * 1e3
+        timings["decide_ms"] += decide * 1e3
+        timings["act_ms"] += act * 1e3
+        timings["steps"] += 1
+
+    @staticmethod
+    def _finalize_timings(timings):
+        """Add per-step averages + total wall time to the accumulated timings."""
+        n = max(timings["steps"], 1)
+        total = timings["perceive_ms"] + timings["decide_ms"] + timings["act_ms"]
+        return {
+            **timings,
+            "total_ms": round(total, 3),
+            "avg_perceive_ms": round(timings["perceive_ms"] / n, 3),
+            "avg_decide_ms": round(timings["decide_ms"] / n, 3),
+            "avg_act_ms": round(timings["act_ms"] / n, 3),
+        }
 
     def _build_agent_prompt(self, task, state, history):
         """Render the perceive→act prompt: goal + set-of-marks + action schema."""
