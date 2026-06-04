@@ -149,3 +149,32 @@ class LocalElementMatcher:
         if best and best["confidence"] >= self.min_confidence:
             return best
         return None
+
+    def locate_all(self, screenshot, max_results=12):
+        """Locate every known label on ``screenshot`` (best match per label).
+
+        Used to enrich a tree-less screen (empty set-of-marks) with visually
+        located elements so the agent is not blind on games/canvas/web views.
+        Returns a confidence-sorted list of match dicts (possibly empty).
+        """
+        if not available():
+            return []
+        scene = self._to_gray(screenshot)
+        if scene is None or not getattr(scene, "size", 0):
+            return []
+        best_by_label = {}
+        for t in self._templates:
+            score, box = self._match_one(scene, t["gray"])
+            if box is None or score < self.min_confidence:
+                continue
+            prev = best_by_label.get(t["label"])
+            if prev is None or score > prev["confidence"]:
+                cx, cy, w, h = box
+                best_by_label[t["label"]] = {
+                    "label": t["label"], "confidence": float(score),
+                    "cx": float(cx), "cy": float(cy),
+                    "bbox": [cx - w / 2.0, cy - h / 2.0, float(w), float(h)],
+                    "method": "template",
+                }
+        results = sorted(best_by_label.values(), key=lambda r: -r["confidence"])
+        return results[:max_results]

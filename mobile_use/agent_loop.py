@@ -93,6 +93,12 @@ class AgentLoop:
         # disables it. The LLM is always the fallback, so a stale hit is cheap.
         self._pcache = PerceptionCache(enabled=os.environ.get("MU_PERCEPTION_CACHE", "1") != "0")
         self._last_replayed_sig = None
+        # Optional local visual matcher to ground tree-less screens (games/canvas/
+        # web views) where the accessibility tree yields no marks. Off by default
+        # (MU_LOCAL_DETECTOR=1 to enable); requires the [detection] extra + captured
+        # samples. Lazily built on first use so __init__ stays cheap and import-safe.
+        self._matcher = None
+        self._matcher_loaded = False
 
     def _load_platform(self):
         """Lazy-load the correct platform module."""
@@ -147,11 +153,72 @@ class AgentLoop:
 
         if marks:
             state["marks"] = self._set_of_marks(state.get("ui_tree") or [])
+            # Tree-less screen? Try the local visual matcher to recover marks.
+            if not state["marks"]:
+                visual = self._visual_marks(state)
+                if visual:
+                    state["marks"] = visual
 
         if self.collector:
             self.collector.record_perception(state)
 
         return state
+
+    def _get_matcher(self):
+        """Lazily build the local element matcher (gated + import-guarded). None if off."""
+        if self._matcher_loaded:
+            return self._matcher
+        self._matcher_loaded = True
+        if os.environ.get("MU_LOCAL_DETECTOR") != "1":
+            return None
+        try:
+            from .local_detector import LocalElementMatcher, available
+            if not available():
+                return None
+            m = LocalElementMatcher.from_session([self.session.name])
+            self._matcher = m if m.template_count else None
+        except Exception:
+            self._matcher = None
+        return self._matcher
+
+    def _visual_marks(self, state):
+        """Marks recovered by pixel-matching when the tree gave none. [] if unavailable.
+
+        Matcher coords are in screenshot *pixels*; set-of-marks (and taps) are in
+        *logical points*, so divide by the screenshot/window scale.
+        """
+        matcher = self._get_matcher()
+        shot = state.get("screenshot_path")
+        if matcher is None or not shot:
+            return []
+        try:
+            import os as _os
+            if not _os.path.exists(shot):
+                return []
+            scale = self._screenshot_scale(shot, state.get("window_size"))
+            marks = []
+            for i, m in enumerate(matcher.locate_all(shot)):
+                marks.append({
+                    "i": i, "type": "visual", "label": m["label"],
+                    "cx": m["cx"] / scale, "cy": m["cy"] / scale,
+                    "confidence": round(m["confidence"], 3), "source": "local_detector",
+                })
+            return marks
+        except Exception:
+            return []
+
+    @staticmethod
+    def _screenshot_scale(shot, window_size):
+        """Pixels-per-logical-point (image_width / window_width). 1.0 if unknown."""
+        try:
+            w = (window_size or {}).get("width")
+            if not w:
+                return 1.0
+            from PIL import Image
+            with Image.open(shot) as im:
+                return im.width / float(w) if w else 1.0
+        except Exception:
+            return 1.0
 
     def _perceive_per_call(self, h):
         """Per-call perception fallback (older daemon without batched snapshot)."""
