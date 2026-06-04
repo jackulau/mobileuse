@@ -336,6 +336,207 @@ def ios_wifi_target(udid=None, host=None, port=WDA_DEFAULT_PORT, probe=True, tim
     return best
 
 
+def _env_path():
+    """The .env file to persist into — repo root, else agent-workspace, else default."""
+    from mobile_use.setup_env import DEFAULT_ENV_PATH, ALT_ENV_PATH
+    if DEFAULT_ENV_PATH.exists():
+        return DEFAULT_ENV_PATH
+    if ALT_ENV_PATH.exists():
+        return ALT_ENV_PATH
+    return DEFAULT_ENV_PATH
+
+
+def _upsert_env_var(path, key, value):
+    """Set/replace ``key=value`` in a .env, preserving every other line.
+
+    Line-based (not render_env) so it never drops hand-edited or unknown keys.
+    """
+    p = Path(path)
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    out, replaced = [], False
+    for ln in lines:
+        stripped = ln.lstrip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            out.append(f"{key}={value}")
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        out.append(f"{key}={value}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return p
+
+
+def _ios17_tunnel_hint():
+    """One-line reminder that iOS 17+ also needs the RemoteXPC tunnel up."""
+    return ("iOS 17+ also needs the RemoteXPC tunnel running over Wi-Fi — "
+            "check it with `mobile-use ios tunnel` (one `sudo` step).")
+
+
+IOS_WIFI_HELP = """\
+mobile-use ios wifi [host] — drive an iPhone over Wi-Fi (cable-free WebDriverAgent).
+
+USAGE:
+  mobile-use ios wifi                 auto-discover the iPhone's mDNS name (<name>.local:8100)
+  mobile-use ios wifi 10.0.0.7        use an explicit Wi-Fi IP / host as fallback
+  mobile-use ios wifi --port 8100     WDA port (default 8100)
+  mobile-use ios wifi --udid UDID     pick which paired iPhone to name-resolve
+  mobile-use ios wifi --no-probe      skip the TCP reachability probe
+  mobile-use ios wifi --persist       write IPH_WDA_URL=... into .env
+  mobile-use ios wifi --check         exit 0 only if the resolved WDA is reachable
+
+Prefers the mDNS hostname (<DeviceName>.local) — it resolves on the LAN even when
+the raw Wi-Fi IP is on an unrouted subnet. On iOS 17+ the RemoteXPC tunnel must
+also be up; see `mobile-use ios tunnel`.
+"""
+
+
+def ios_wifi_main(argv):
+    """`mobile-use ios wifi [host] [--port N] [--udid U] [--no-probe] [--persist] [--check]`."""
+    if argv and argv[0] in {"-h", "--help"}:
+        print(IOS_WIFI_HELP)
+        return 0
+
+    host = udid = port = None
+    probe = True
+    persist = check = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--port" and i + 1 < len(argv):
+            try:
+                port = int(argv[i + 1])
+            except ValueError:
+                print(f"invalid --port {argv[i + 1]!r}", file=sys.stderr)
+                return 2
+            i += 1
+        elif a == "--udid" and i + 1 < len(argv):
+            udid = argv[i + 1]; i += 1
+        elif a == "--no-probe":
+            probe = False
+        elif a == "--persist":
+            persist = True
+        elif a == "--check":
+            check = True
+        elif not a.startswith("-") and host is None:
+            host = a
+        i += 1
+
+    udid = udid or os.environ.get("IPH_UDID") or None
+    res = ios_wifi_target(udid=udid, host=host, port=(port or WDA_DEFAULT_PORT), probe=probe)
+    if res is None:
+        print("No iPhone found to name-resolve, and no explicit host given.\n"
+              "  - Connect the iPhone over USB once (so it can be named), or\n"
+              "  - pass the Wi-Fi IP:  mobile-use ios wifi <ip>", file=sys.stderr)
+        return 1
+
+    url, reach, src = res["url"], res["reachable"], res["source"]
+    if probe:
+        print(f"WebDriverAgent ({src}): {url} — {'reachable' if reach else 'NOT reachable'}")
+    else:
+        print(f"WebDriverAgent ({src}): {url} — (not probed)")
+
+    if persist:
+        path = _upsert_env_var(_env_path(), "IPH_WDA_URL", url)
+        print(f"persisted IPH_WDA_URL to {path}")
+
+    print(f"\nSet this to drive over Wi-Fi:\n  IPH_WDA_URL={url}")
+    print(f"\n{_ios17_tunnel_hint()}")
+
+    if check:
+        return 0 if reach else 1
+    return 0 if (reach or not probe) else 1
+
+
+# ---- iOS RemoteXPC tunnel (pymobiledevice3 tunneld) -----------------------
+
+TUNNELD_HOST = "127.0.0.1"
+TUNNELD_PORT = 49151  # pymobiledevice3 tunneld REST API default (TUNNELD_DEFAULT_ADDRESS)
+
+
+def _pymobiledevice3_available():
+    """True if the pymobiledevice3 package is importable."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("pymobiledevice3") is not None
+    except Exception:
+        return False
+
+
+def _tunneld_start_cmd():
+    """The exact one-liner to start the RemoteXPC tunnel daemon (needs sudo).
+
+    pymobiledevice3 ships as a module; only some installs put a console script on
+    PATH. Emit whichever form will actually run on this machine.
+    """
+    if _which("pymobiledevice3"):
+        return "sudo pymobiledevice3 remote tunneld"
+    return "sudo python3 -m pymobiledevice3 remote tunneld"
+
+
+def tunneld_status(host=TUNNELD_HOST, port=TUNNELD_PORT, timeout=1.5):
+    """Probe the pymobiledevice3 tunneld REST API. Returns (up, detail, tunnels).
+
+    ``tunnels`` is the parsed JSON tunnel map when readable, else None. Read-only
+    — a plain TCP connect + a best-effort GET; never disturbs a running connector.
+    """
+    from mobile_use.netcheck import tcp_reachable
+    ok, detail = tcp_reachable(host, port, timeout=timeout)
+    if not ok:
+        return False, detail, None
+    tunnels = None
+    try:
+        import json as _json
+        import urllib.request
+        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=timeout) as r:
+            tunnels = _json.loads(r.read().decode())
+    except Exception:
+        pass  # API up but list unreadable (version skew) — still "up".
+    return True, f"tunneld reachable at {host}:{port}", tunnels
+
+
+IOS_TUNNEL_HELP = """\
+mobile-use ios tunnel [--check] — RemoteXPC tunnel status for cable-free iOS 17+.
+
+On iOS 17+ Apple's RemoteXPC replaced lockdownd, so WebDriverAgent is only
+reachable through a tunnel. For cable-free (Wi-Fi) control the tunnel daemon must
+be running so the connection survives unplugging USB:
+
+  sudo pymobiledevice3 remote tunneld      # the one privileged step (keep running)
+
+This command probes the tunneld REST API (127.0.0.1:49151) and reports whether
+the tunnel is up. It NEVER runs sudo for you — it prints the exact command.
+
+  --check    exit 0 if the tunnel is up, 1 otherwise (for scripts / doctor)
+"""
+
+
+def ios_tunnel_main(argv):
+    """`mobile-use ios tunnel [--check]` — RemoteXPC tunnel health + start command."""
+    if argv and argv[0] in {"-h", "--help"}:
+        print(IOS_TUNNEL_HELP)
+        return 0
+
+    if not _pymobiledevice3_available():
+        print("pymobiledevice3 is not installed (needed for the iOS 17+ RemoteXPC tunnel).\n"
+              "  install:  python3 -m pip install pymobiledevice3", file=sys.stderr)
+        return 1
+
+    up, detail, tunnels = tunneld_status()
+    if up:
+        n = len(tunnels) if isinstance(tunnels, dict) else None
+        suffix = f" ({n} device tunnel{'' if n == 1 else 's'})" if n is not None else ""
+        print(f"RemoteXPC tunnel: UP — {detail}{suffix}")
+        return 0
+
+    print(f"RemoteXPC tunnel: DOWN — {detail}")
+    print("\nStart it (keep running in its own terminal — needs sudo once):\n"
+          f"  {_tunneld_start_cmd()}")
+    print("\nThen re-check:  mobile-use ios tunnel --check")
+    return 1
+
+
 def discover_connected():
     """Return a list of discovered devices.
 

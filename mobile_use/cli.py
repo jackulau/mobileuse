@@ -451,6 +451,10 @@ def main():
                 "                        --check exits 0 if already signed, 1 otherwise.\n"
                 "  build-wda [--check]   Build the WebDriverAgent test target (first-run setup).\n"
                 "                        --check exits 0 if already built, 1 otherwise.\n"
+                "  wifi [host]           Drive cable-free over Wi-Fi (mDNS-preferred WDA URL).\n"
+                "                        Prints/persists IPH_WDA_URL. --check probes reachability.\n"
+                "  tunnel [--check]      RemoteXPC tunnel status + the one `sudo` start command\n"
+                "                        (iOS 17+ needs it for cable-free to survive unplug).\n"
             )
             sys.exit(0 if len(remaining) >= 2 else 2)
         if remaining[1] == "sign-wda":
@@ -459,6 +463,12 @@ def main():
         if remaining[1] == "build-wda":
             from . import ios_wda
             sys.exit(ios_wda.build_main(remaining[2:]))
+        if remaining[1] == "wifi":
+            from . import devices as _devices
+            sys.exit(_devices.ios_wifi_main(remaining[2:]))
+        if remaining[1] == "tunnel":
+            from . import devices as _devices
+            sys.exit(_devices.ios_tunnel_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use ios` action: {remaining[1]!r}. Try `mobile-use ios --help`.")
 
     # android <action> — Android-specific subcommands.
