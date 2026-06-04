@@ -248,6 +248,94 @@ def android_wifi_main(argv):
     return 0
 
 
+# ---- iOS Wi-Fi (cable-free WebDriverAgent over mDNS) ----------------------
+
+WDA_DEFAULT_PORT = 8100
+
+
+def _sanitize_bonjour(name):
+    """Approximate Apple's Bonjour hostname for a device name.
+
+    iOS advertises ``<DeviceName>.local`` on the LAN, but Bonjour munges the
+    name: spaces/underscores become hyphens and other punctuation is dropped
+    (``Jack's iPhone`` -> ``Jacks-iPhone``). Returns the munged label, or None.
+    """
+    if not name:
+        return None
+    s = name.strip().replace(" ", "-").replace("_", "-")
+    s = re.sub(r"[^A-Za-z0-9-]", "", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s or None
+
+
+def _ios_mdns_candidates(udid=None):
+    """Candidate ``<name>.local`` hostnames for the iPhone, best-guess first.
+
+    Derives names from ``idevicename`` (single udid) or ``discover_connected``
+    (all physical iPhones). Both the Bonjour-munged label and the raw
+    space-to-hyphen form are tried, since the exact munging is heuristic.
+    """
+    names = []
+    if udid:
+        n = _ios_name(udid)
+        if n:
+            names.append(n)
+    else:
+        for d in discover_connected():
+            if d.get("platform") == "ios" and not d.get("simulator"):
+                n = _ios_name(d["udid"]) or d.get("name")
+                if n:
+                    names.append(n)
+    cands, seen = [], set()
+    for n in names:
+        for h in (_sanitize_bonjour(n), n.strip().replace(" ", "-")):
+            if h and h not in seen:
+                seen.add(h)
+                cands.append(f"{h}.local")
+    return cands
+
+
+def ios_wifi_target(udid=None, host=None, port=WDA_DEFAULT_PORT, probe=True, timeout=2.0):
+    """Resolve the wireless WebDriverAgent URL for the iPhone.
+
+    Prefers the mDNS hostname ``<DeviceName>.local:<port>`` — Bonjour resolves it
+    on the LAN, and it has been observed to work where a raw Wi-Fi IP did not
+    (the IP is often on a different subnet / not routed, while mDNS is). Falls
+    back to an explicit ``host`` (e.g. a known Wi-Fi IP) when given.
+
+    With ``probe=True`` each candidate is TCP-probed on ``port`` and the first
+    reachable one wins; otherwise the top candidate is returned unprobed.
+
+    Returns a dict ``{url, host, port, source, reachable, candidates}`` (source
+    in {"mdns","explicit"}), or None when there are no candidates at all.
+    """
+    from mobile_use.netcheck import target_reachable
+
+    candidates = [(h, "mdns") for h in _ios_mdns_candidates(udid)]
+    if host:
+        candidates.append((host, "explicit"))  # explicit IP is the fallback
+    if not candidates:
+        return None
+
+    tried = []
+    for h, source in candidates:
+        entry = {"url": f"http://{h}:{port}", "host": h, "port": port, "source": source}
+        if not probe:
+            entry["reachable"] = None
+            entry["candidates"] = [entry]
+            return entry
+        ok, _detail = target_reachable(entry["url"], default_port=port, timeout=timeout)
+        entry["reachable"] = ok
+        tried.append(entry)
+        if ok:
+            entry["candidates"] = tried
+            return entry
+
+    best = dict(tried[0])  # nothing reachable — return the best candidate, flagged
+    best["candidates"] = tried
+    return best
+
+
 def discover_connected():
     """Return a list of discovered devices.
 
