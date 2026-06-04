@@ -499,6 +499,10 @@ def main():
         print(f"Exported {count} events → {out}")
         return
 
+    if remaining and remaining[0] == "train-detector":
+        from .train_detector import train_main
+        sys.exit(train_main(remaining[1:]))
+
     if remaining and remaining[0] == "training-stats":
         from .collector import training_stats
         stats = training_stats()
