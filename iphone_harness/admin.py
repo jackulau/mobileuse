@@ -470,9 +470,35 @@ def _check_battery():
 
 
 def _check_wda_url_reachable(url):
-    """Preflight a wireless WebDriverAgent endpoint (IPH_WDA_URL). (bool, detail)."""
+    """Preflight a wireless WebDriverAgent endpoint (IPH_WDA_URL). (bool, detail).
+
+    Handles mDNS hostnames (``http://iPhone.local:8100``) transparently — the OS
+    Bonjour resolver turns ``.local`` into an address inside ``socket`` — which is
+    the path confirmed to work when a raw Wi-Fi IP was on an unrouted subnet.
+    """
     from mobile_use.netcheck import target_reachable
     return target_reachable(url, default_port=8100, timeout=2.0)
+
+
+def _check_cablefree_tunnel():
+    """Advisory: is the RemoteXPC tunnel up so cable-free survives unplug? (bool, detail).
+
+    Never a hard FAIL — Appium's bundled appium-ios-remotexpc can also provide the
+    tunnel, so a down pymobiledevice3 tunneld is only a WARN (mirrors the battery
+    check's WARN style). The point is to catch "WDA reachable now over USB, but the
+    moment you unplug it dies" before the user hits it mid-session.
+    """
+    try:
+        from mobile_use.devices import _pymobiledevice3_available, tunneld_status
+    except Exception:
+        return True, "(skipped — devices module unavailable)"
+    if not _pymobiledevice3_available():
+        return True, "(skipped — pymobiledevice3 not installed; Appium may tunnel instead)"
+    up, detail, _tunnels = tunneld_status()
+    if up:
+        return True, f"RemoteXPC tunnel up ({detail})"
+    return True, ("tunnel DOWN (WARN: on iOS 17+ cable-free drops when USB is unplugged — "
+                  "start it: `mobile-use ios tunnel`)")
 
 
 def run_doctor():
@@ -529,6 +555,13 @@ def run_doctor():
             _check_wda_url_reachable, (_wda_url,),
             "Ensure WDA is running on the iPhone and the Mac shares its network. "
             "On iOS 17+, start the RemoteXPC tunnel first (see `--doctor` version block).",
+        ))
+        # Cable-free needs the tunnel up to survive unplug (iOS 17+). Advisory.
+        checks.append((
+            "Cable-free survives unplug (RemoteXPC tunnel)",
+            _check_cablefree_tunnel, (),
+            "Start the tunnel and keep it running: `mobile-use ios tunnel` "
+            "(prints the one `sudo pymobiledevice3 remote tunneld` step).",
         ))
     total = len(checks) + 2
 
