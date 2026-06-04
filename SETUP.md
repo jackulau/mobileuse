@@ -210,40 +210,55 @@ On Windows: `Test-NetConnection -ComputerName <mac> -Port 8763`.
 Run a phone over Wi-Fi with no cable tethered during automation. Both platforms
 still need a one-time USB step to bootstrap.
 
-## iOS over Wi-Fi (WebDriverAgent on the iPhone's IP)
+## iOS over Wi-Fi (cable-free WebDriverAgent)
 
 WebDriverAgent (WDA) is the HTTP server Appium drives. Once it's installed and
-running on the iPhone, its server (default port **8100**) is reachable over Wi-Fi —
-so you can point Appium at `http://<iphone-wifi-ip>:8100` instead of tunneling WDA
-over USB.
+running on the iPhone, its server (port **8100**) is reachable over Wi-Fi — so you
+can drive the phone with no cable tethered.
 
-1. **First launch over USB.** WDA must be built/installed/launched once via USB
-   (Part A4). Keep a session alive, or set `IPH_WDA_DERIVED_DATA_PATH` so WDA is reused.
-2. **iOS 17+ (incl. iOS 26): start the RemoteXPC tunnel.** Apple moved developer
-   services behind RemoteXPC, so WDA is unreachable — over USB *or* Wi-Fi — until a
-   tunnel is up. Either let Appium's bundled `appium-ios-remotexpc` manage it (the
-   xcuitest driver does this when configured), or run an external tunnel and leave it
-   running:
-   ```bash
-   sudo pymobiledevice3 remote tunneld
-   ```
-   Without a tunnel, session create fails with `RSDRequired` / `InvalidServiceError`.
-   (iOS 16 and earlier use classic lockdownd and need no tunnel.)
-3. **Find the iPhone's Wi-Fi IP.** Settings → Wi-Fi → (i) on the joined network. The
-   iPhone and the Mac/host must be on the same LAN.
-4. **Point mobile-use at it.**
-   ```bash
-   IPH_WDA_URL=http://192.168.1.50:8100      # in .env or exported
-   mobile-use --ios --doctor                 # preflights WDA reachability + the version matrix
-   mobile-use --ios -c 'print(active_app())'
-   ```
-   `IPH_WDA_URL` sets Appium's `appium:webDriverAgentUrl` — it expects WDA to be
-   already listening and skips the build/launch phase. `IPH_CAPS` still merges last,
-   so an explicit `appium:webDriverAgentUrl` there overrides `IPH_WDA_URL`.
+**Fast path — let mobile-use wire it for you:**
+```bash
+# 1) One-time USB bootstrap: build/launch WDA once (Part A4); keep it alive, or
+#    set IPH_WDA_DERIVED_DATA_PATH so it's reused.
+# 2) iOS 17+ (incl. iOS 26): bring up the RemoteXPC tunnel — ONE sudo step, leave it running:
+mobile-use ios tunnel            # prints status; if down, prints the exact command to run:
+#   sudo pymobiledevice3 remote tunneld
+# 3) Discover + set the wireless WDA URL (prefers the iPhone's mDNS name):
+mobile-use ios wifi --persist    # writes IPH_WDA_URL=http://<DeviceName>.local:8100 to .env
+# 4) Drive cable-free — you can unplug USB now:
+mobile-use --ios --doctor        # preflights WDA reachability + tunnel + version matrix
+mobile-use --ios -c 'print(active_app())'
+```
+
+**Why the mDNS hostname, not the raw IP.** `mobile-use ios wifi` prefers
+`http://<DeviceName>.local:8100` (resolved by Bonjour/mDNS) over the raw Wi-Fi IP.
+In practice the mDNS name resolves reliably on the LAN even when the iPhone's
+reported Wi-Fi IP sits on an unrouted subnet (hotspot, VLAN, CGNAT) and a direct IP
+connect fails. Pass an explicit IP as a fallback: `mobile-use ios wifi 192.168.1.50`.
+
+**Manual form** (equivalent, if you'd rather set it yourself):
+```bash
+IPH_WDA_URL=http://iPhone.local:8100     # in .env or exported (mDNS name preferred)
+```
+`IPH_WDA_URL` sets Appium's `appium:webDriverAgentUrl` — it expects WDA to be
+already listening and skips the build/launch phase. `IPH_CAPS` still merges last,
+so an explicit `appium:webDriverAgentUrl` there overrides `IPH_WDA_URL`.
+
+**Make it survive unplug.** On iOS 17+ the connection only survives unplugging USB
+while the RemoteXPC tunnel stays up (Appium's bundled `appium-ios-remotexpc` can also
+provide it). Confirm cable-free is truly cable-free:
+```bash
+mobile-use ios tunnel --check    # exit 0 = tunnel up
+mobile-use --ios --doctor        # look for: "Cable-free survives unplug (RemoteXPC tunnel)"
+# Now physically unplug USB and re-run:
+mobile-use --ios -c 'print(active_app())'   # still works => cable-free confirmed
+```
+Without a tunnel, session create fails with `RSDRequired` / `InvalidServiceError`.
+(iOS 16 and earlier use classic lockdownd and need no tunnel.)
 
 If `--doctor` shows "WebDriverAgent reachable over Wi-Fi … not reachable", WDA isn't
 running, the tunnel is down (iOS 17+), or the device left the network — re-launch over
-USB, restart the tunnel, and confirm the same LAN.
+USB, restart the tunnel (`mobile-use ios tunnel`), and confirm the same LAN.
 
 ## Android over Wi-Fi (adb-over-TCP)
 
