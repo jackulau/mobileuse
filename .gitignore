@@ -10,3 +10,10 @@ tasks/
 
 # Claude Code runtime state (never commit)
 .claude/
+
+# Detector training artifacts (mobile-use train-detector --train writes these)
+runs/
+*.pt
+*.onnx
+detector-dataset/
+synthetic-ui-dataset/
