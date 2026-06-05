@@ -12,6 +12,17 @@ def test_device_repr():
     assert "ios" in repr(d)
 
 
+def test_unsupported_verb_names_platform():
+    # A platform-only verb accessed on the wrong platform must name the platform (not a
+    # bare "no helper"), so DevicePool.broadcast's per-device error is actionable.
+    d = Device("px", "android")
+    with pytest.raises(AttributeError, match="not supported on android"):
+        d.swipe_back            # iOS-only verb; attribute access alone triggers the proxy
+    d2 = Device("ip", "ios")
+    with pytest.raises(AttributeError, match="not supported on ios"):
+        d2.key_event            # Android-only verb on iOS
+
+
 def test_pool_add_ios():
     pool = DevicePool()
     dev = pool.add_ios("iphone1", udid="FAKE-UDID-1")

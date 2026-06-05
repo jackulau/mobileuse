@@ -141,7 +141,11 @@ class Device:
         fn = getattr(self._helpers, name, None)
         if fn is not None and callable(fn):
             return self._bound(fn)
-        raise AttributeError(f"Device {self.name!r} has no helper {name!r}")
+        # Explicit capability signal: in a mixed pool, a platform-only verb (e.g.
+        # swipe_back on Android, key_event on iOS) names the platform, not a bare
+        # "no helper" — so broadcast()'s per-device error says WHY it failed.
+        raise AttributeError(
+            f"Device {self.name!r}: action {name!r} is not supported on {self.platform}")
 
     def __repr__(self):
         return f"Device({self.name!r}, platform={self.platform!r})"

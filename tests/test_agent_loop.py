@@ -208,6 +208,20 @@ def test_act_unknown_action_returns_error(tmp_path, monkeypatch):
     assert "Unknown action" in result["error"]
 
 
+def test_act_unsupported_platform_verb_is_explicit(tmp_path, monkeypatch):
+    # 'key_event' is a known (Android-only) ACTION_VERB; on iOS the fake helpers lack
+    # it, so act() must say "not supported on ios" (capability gap), not "Unknown action".
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _install_fakes(monkeypatch, "ios")
+    from mobile_use.agent_loop import ACTION_VERBS, AgentLoop
+    assert "key_event" in ACTION_VERBS
+    loop = AgentLoop(platform="ios", session_name="unsupported", collect=False)
+    loop.start()
+    result = loop.act("key_event", keycode=4)
+    assert "error" in result and "not supported on ios" in result["error"]
+    assert result.get("unsupported_on") == "ios"
+
+
 def test_act_rejects_unknown_argument(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     h, _a = _install_fakes(monkeypatch, "ios")

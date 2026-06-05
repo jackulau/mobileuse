@@ -524,10 +524,18 @@ def active_app():
 # ---- app lifecycle ---------------------------------------------------------
 
 def launch_app(package):
-    """Launch (or foreground) an app by package id.
+    """Cold-start an app by package id — parity with iOS ``launch_app``.
+
+    Unlike ``activate_app`` (which only foregrounds an already-running app), this
+    force-stops the app first so it starts FRESH, matching iOS ``mobile: launchApp``
+    semantics. Use ``activate_app`` when you want to resume without restarting.
 
         launch_app("com.android.chrome")
     """
+    try:
+        appium("mobile: terminateApp", appId=package)   # best-effort: ensure not running
+    except Exception:
+        pass
     return appium("mobile: activateApp", appId=package)
 
 

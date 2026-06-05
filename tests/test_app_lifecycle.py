@@ -34,12 +34,31 @@ def test_ios_is_app_installed_from_state(monkeypatch):
     assert ih.is_app_installed("com.apple.mobilesafari") is True
 
 
-def test_android_lifecycle_uses_app_id(monkeypatch):
+def test_android_launch_app_cold_starts(monkeypatch):
+    # Parity with iOS launchApp: launch_app must FORCE-STOP then activate (a real cold
+    # start), not just foreground like activate_app — otherwise an agent expecting a
+    # fresh launch silently gets the app's prior state on Android.
     calls = []
     monkeypatch.setattr(ah, "appium", lambda script, **kw: calls.append((script, kw)) or True)
     ah.launch_app("com.android.chrome")
+    assert calls == [
+        ("mobile: terminateApp", {"appId": "com.android.chrome"}),
+        ("mobile: activateApp", {"appId": "com.android.chrome"}),
+    ]
+
+
+def test_android_activate_app_does_not_restart(monkeypatch):
+    # activate_app stays a pure foreground (no terminate) — the resume path.
+    calls = []
+    monkeypatch.setattr(ah, "appium", lambda script, **kw: calls.append((script, kw)) or True)
+    ah.activate_app("com.android.chrome")
+    assert calls == [("mobile: activateApp", {"appId": "com.android.chrome"})]
+
+
+def test_android_lifecycle_uses_app_id(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ah, "appium", lambda script, **kw: calls.append((script, kw)) or True)
     ah.terminate_app("com.android.chrome")
     ah.is_app_installed("com.android.chrome")
-    assert calls[0] == ("mobile: activateApp", {"appId": "com.android.chrome"})
-    assert calls[1] == ("mobile: terminateApp", {"appId": "com.android.chrome"})
-    assert calls[2] == ("mobile: isAppInstalled", {"appId": "com.android.chrome"})
+    assert calls[0] == ("mobile: terminateApp", {"appId": "com.android.chrome"})
+    assert calls[1] == ("mobile: isAppInstalled", {"appId": "com.android.chrome"})

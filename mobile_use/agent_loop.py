@@ -413,6 +413,11 @@ class AgentLoop:
 
         fn = getattr(h, action, None)
         if fn is None:
+            # Distinguish a known verb the OTHER platform has (capability gap) from a
+            # genuine typo — so the caller gets an actionable "unsupported here" signal.
+            if action in ACTION_VERBS:
+                return {"error": f"Action {action!r} is not supported on {self.platform}",
+                        "unsupported_on": self.platform}
             return {"error": f"Unknown action: {action}"}
 
         # Validate the arguments against the helper's signature BEFORE dispatch, so a
