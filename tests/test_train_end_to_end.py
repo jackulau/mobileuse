@@ -23,9 +23,11 @@ if os.environ.get("MU_RUN_TRAIN_E2E") != "1":
     pytest.skip("set MU_RUN_TRAIN_E2E=1 to run the real (~1-2 min) training e2e",
                 allow_module_level=True)
 
-from mobile_use.synthetic_ui import generate_seed_dataset           # noqa: E402
-from mobile_use.train_detector import (                              # noqa: E402
-    build_yolo_dataset, train, YoloDetector,
+from mobile_use.synthetic_ui import generate_seed_dataset  # noqa: E402
+from mobile_use.train_detector import (  # noqa: E402
+    YoloDetector,
+    build_yolo_dataset,
+    train,
 )
 
 _LABELS = ("Search", "Send")

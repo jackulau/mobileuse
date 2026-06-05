@@ -233,7 +233,9 @@ def _build_locator(weights=None):
     # Prefer a trained YOLO detector when weights (or MU_DETECTOR_WEIGHTS) + dep exist.
     try:
         import os
-        from mobile_use.train_detector import YoloDetector, available as yolo_available
+
+        from mobile_use.train_detector import YoloDetector
+        from mobile_use.train_detector import available as yolo_available
         w = weights or os.environ.get("MU_DETECTOR_WEIGHTS")
         if w and yolo_available() and os.path.exists(w):
             det = YoloDetector(w)
@@ -243,7 +245,8 @@ def _build_locator(weights=None):
         pass
     # Fall back to the template matcher built from captured/seed samples.
     try:
-        from mobile_use.local_detector import LocalElementMatcher, available as tm_available
+        from mobile_use.local_detector import LocalElementMatcher
+        from mobile_use.local_detector import available as tm_available
         if tm_available():
             m = LocalElementMatcher.from_session()
             if m.template_count:
