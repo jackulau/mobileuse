@@ -517,6 +517,10 @@ def main():
         from .perception_cache import bench_main
         sys.exit(bench_main(remaining[1:]))
 
+    if remaining and remaining[0] == "selfcheck":
+        from .selfcheck import selfcheck_main
+        sys.exit(selfcheck_main(remaining[1:]))
+
     if remaining and remaining[0] == "training-stats":
         from .collector import training_stats
         stats = training_stats()
