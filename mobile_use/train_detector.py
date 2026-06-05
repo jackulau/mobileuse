@@ -127,9 +127,30 @@ def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None):
     yolo = YOLO(model)
     result = yolo.train(data=data, epochs=epochs, imgsz=imgsz,
                         project=project, verbose=False)
-    weights = getattr(getattr(result, "save_dir", None), "__str__", lambda: "")()
+    # ultralytics writes the actual checkpoints to <save_dir>/weights/{best,last}.pt;
+    # result.save_dir is only the RUN directory, so resolve the real weights file.
+    save_dir = getattr(result, "save_dir", None) or project
+    weights = _resolve_weights(save_dir, yolo)
     return {"status": "trained", "data": data, "epochs": epochs,
-            "save_dir": str(getattr(result, "save_dir", project)), "weights": weights}
+            "save_dir": str(save_dir), "weights": weights}
+
+
+def _resolve_weights(save_dir, yolo=None):
+    """Best-effort path to the trained checkpoint: best.pt, then trainer-reported, then last.pt.
+
+    Returns the canonical ``<save_dir>/weights/best.pt`` even when nothing exists yet
+    (so callers get a stable, loadable-once-flushed path rather than a run directory).
+    """
+    wdir = Path(save_dir) / "weights"
+    best, last = wdir / "best.pt", wdir / "last.pt"
+    reported = getattr(getattr(yolo, "trainer", None), "best", None)
+    if best.exists():
+        return str(best)
+    if reported and Path(reported).exists():
+        return str(reported)
+    if last.exists():
+        return str(last)
+    return str(best)
 
 
 def load_detector(weights):
