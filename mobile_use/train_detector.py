@@ -201,6 +201,96 @@ def load_detector(weights):
     return YOLO(weights)
 
 
+# Confidence gate shared with the template matcher (same env, same default).
+_DEFAULT_MIN_CONFIDENCE = float(os.environ.get("MU_DETECTOR_MIN_CONF", "0.78"))
+
+
+class YoloDetector:
+    """Confidence-gated serving wrapper around a trained YOLO checkpoint.
+
+    Mirrors the optional-dep guard pattern of ``local_detector``: with ultralytics
+    absent (or no weights), it is inert — ``available()`` is False and ``predict`` /
+    ``locate`` return ``[]`` / ``None`` rather than raising. Emits the SAME canonical
+    match-dict shape as the template matcher (``{label, confidence, cx, cy, bbox:
+    [x, y, w, h], method}``) in screenshot *pixel* space, so ``perceive`` can consume
+    either grounding source identically. Configure via env: ``MU_DETECTOR_WEIGHTS``
+    (checkpoint path) + ``MU_DETECTOR_MIN_CONF`` (gate, default 0.78).
+    """
+
+    def __init__(self, weights, min_confidence=None):
+        self.weights = weights
+        self.min_confidence = float(
+            min_confidence if min_confidence is not None else _DEFAULT_MIN_CONFIDENCE)
+        self._model = None
+
+    @classmethod
+    def from_env(cls, min_confidence=None):
+        """Build from ``MU_DETECTOR_WEIGHTS``; None if unset/missing/ultralytics absent."""
+        weights = os.environ.get("MU_DETECTOR_WEIGHTS")
+        if not weights or not available() or not os.path.exists(weights):
+            return None
+        return cls(weights, min_confidence=min_confidence)
+
+    def available(self):
+        """True iff ultralytics is importable AND the weights file exists."""
+        return bool(available() and self.weights and os.path.exists(self.weights))
+
+    def load(self):
+        """Lazily load the YOLO model (None when ultralytics absent)."""
+        if self._model is None:
+            self._model = load_detector(self.weights)
+        return self._model
+
+    def _parse_results(self, results):
+        """Ultralytics Results -> sorted list of canonical match dicts (pixel space)."""
+        out = []
+        if not results:
+            return out
+        r = results[0]
+        boxes = getattr(r, "boxes", None)
+        if boxes is None:
+            return out
+        names = getattr(r, "names", None) or {}
+        try:
+            xyxy = boxes.xyxy.tolist()
+            confs = boxes.conf.tolist()
+            clss = boxes.cls.tolist()
+        except Exception:
+            return out
+        for (x1, y1, x2, y2), conf, cls in zip(xyxy, confs, clss):
+            if conf < self.min_confidence:
+                continue
+            idx = int(cls)
+            label = names.get(idx, str(idx)) if isinstance(names, dict) else str(idx)
+            w, h = float(x2 - x1), float(y2 - y1)
+            out.append({
+                "label": label, "confidence": float(conf),
+                "cx": float((x1 + x2) / 2.0), "cy": float((y1 + y2) / 2.0),
+                "bbox": [float(x1), float(y1), w, h], "method": "yolo",
+            })
+        out.sort(key=lambda d: -d["confidence"])
+        return out
+
+    def predict(self, screenshot, max_results=12):
+        """All gated detections on ``screenshot`` (sorted by confidence). [] if inert."""
+        model = self.load()
+        if model is None:
+            return []
+        try:
+            results = model.predict(source=screenshot, conf=self.min_confidence,
+                                    verbose=False)
+        except Exception:
+            return []
+        return self._parse_results(results)[:max_results]
+
+    def locate(self, screenshot, label=None):
+        """Single best gated detection (optionally label-filtered), or None."""
+        for m in self.predict(screenshot):
+            if label is None or m["label"] == label:
+                return m
+        return None
+
+
 def train_main(argv):
     """`mobile-use train-detector [--session N] [--out DIR] [--single-class] [--train] [--epochs N]`."""
     if argv and argv[0] in {"-h", "--help"}:
