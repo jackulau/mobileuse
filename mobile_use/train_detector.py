@@ -150,12 +150,15 @@ def build_yolo_dataset(samples, out_dir, single_class=False):
             "train_images": len(train_stems), "val_images": len(val_stems)}
 
 
-def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None):
+def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None,
+          **train_kwargs):
     """Train a YOLOv8-nano on a built dataset. Import-guarded.
 
     Returns ``{"status": "skipped", ...}`` when ultralytics is absent so callers
     never crash on installs without the ``[yolo]`` extra; otherwise trains and
-    returns ``{"status": "trained", "weights": <best.pt>}``.
+    returns ``{"status": "trained", "weights": <best.pt>}``. Extra ``train_kwargs``
+    (e.g. ``seed``, ``deterministic``, ``batch``, ``patience``) pass through to
+    ``ultralytics``'s trainer for reproducible / bounded runs.
     """
     if not available():
         return {"status": "skipped",
@@ -166,7 +169,7 @@ def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None):
     project = project or str(Path(dataset_dir) / "runs")
     yolo = YOLO(model)
     result = yolo.train(data=data, epochs=epochs, imgsz=imgsz,
-                        project=project, verbose=False)
+                        project=project, verbose=False, **train_kwargs)
     # ultralytics writes the actual checkpoints to <save_dir>/weights/{best,last}.pt;
     # result.save_dir is only the RUN directory, so resolve the real weights file.
     save_dir = getattr(result, "save_dir", None) or project
