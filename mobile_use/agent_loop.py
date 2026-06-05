@@ -207,6 +207,46 @@ class AgentLoop:
             return matcher.locate_all(shot)
         return []
 
+    def _local_shortcircuit(self, task, state):
+        """A high-confidence local detection that maps to the task target -> a direct
+        tap action, bypassing the VLM for THIS step. None unless every guard holds.
+
+        OFF by default (MU_LOCAL_SHORTCIRCUIT=1). This is the highest-risk path: a wrong
+        match becomes a real tap with no VLM in the loop, so it fires only when ALL hold:
+          * the flag is on,
+          * a local match's label is NAMED by the task (deterministic target mapping),
+          * it clears the confidence gate (MU_DETECTOR_MIN_CONF), and
+          * it is the UNIQUE such match (no ambiguity about what to tap).
+        Coordinates are converted pixel->logical via _screenshot_scale (Retina-safe).
+        """
+        if os.environ.get("MU_LOCAL_SHORTCIRCUIT") != "1":
+            return None
+        shot = state.get("screenshot_path")
+        if not shot or not task:
+            return None
+        try:
+            matches = self._local_matches(shot)
+            if not matches:
+                return None
+            gate = float(os.environ.get("MU_DETECTOR_MIN_CONF", "0.78"))
+            tl = task.lower()
+            cands = [m for m in matches
+                     if m.get("label") and str(m["label"]).lower() in tl
+                     and float(m.get("confidence", 0.0)) >= gate]
+            if len(cands) != 1:
+                return None          # need exactly one confident, task-named target
+            m = cands[0]
+            scale = self._screenshot_scale(shot, state.get("window_size")) or 1.0
+            return {
+                "fn": "tap_at_xy",
+                "kwargs": {"x": m["cx"] / scale, "y": m["cy"] / scale},
+                "_via": "local_shortcircuit",
+                "_label": m["label"],
+                "_confidence": round(float(m["confidence"]), 3),
+            }
+        except Exception:
+            return None
+
     def _get_matcher(self):
         """Lazily build the local element matcher (gated + import-guarded). None if off."""
         if self._matcher_loaded:
@@ -483,8 +523,9 @@ class AgentLoop:
         self.start()
         history = []
         self._last_replayed_sig = None
+        self._last_shortcircuit_sig = None
         timings = {"perceive_ms": 0.0, "decide_ms": 0.0, "act_ms": 0.0,
-                   "llm_calls": 0, "cache_hits": 0, "steps": 0}
+                   "llm_calls": 0, "cache_hits": 0, "shortcircuits": 0, "steps": 0}
         for step in range(max_steps):
             t0 = time.perf_counter()
             state = self.perceive(marks=True)
@@ -495,10 +536,22 @@ class AgentLoop:
             # Anti-loop: never replay the SAME signature two steps running — a
             # static screen would otherwise trap the loop. Force the LLM instead.
             from_cache = cached is not None and sig != self._last_replayed_sig
+            # Local-detector short-circuit (off by default): a confident, task-named
+            # local match taps directly, skipping the LLM. Anti-loop: never two steps
+            # running on the same screen (a no-op tap would otherwise trap the loop).
+            shortcut = None
+            if not from_cache and sig != self._last_shortcircuit_sig:
+                shortcut = self._local_shortcircuit(task, state)
             if from_cache:
                 action = cached
                 self._last_replayed_sig = sig
                 timings["cache_hits"] += 1
+                t2 = time.perf_counter()
+            elif shortcut is not None:
+                action = shortcut
+                self._last_shortcircuit_sig = sig
+                self._last_replayed_sig = None
+                timings["shortcircuits"] += 1
                 t2 = time.perf_counter()
             else:
                 prompt = self._build_agent_prompt(task, state, history)
@@ -512,6 +565,7 @@ class AgentLoop:
                 timings["llm_calls"] += 1
                 action = _parse_json_block(raw)
                 self._last_replayed_sig = None
+                self._last_shortcircuit_sig = None
             if action is None:
                 self._accrue(timings, perceive=(t1 - t0), decide=(t2 - t1))
                 history.append({"step": step, "error": "unparseable LLM reply",
