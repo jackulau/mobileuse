@@ -38,7 +38,7 @@ If anything fails:
 mobile-use --doctor               # numbered checks with one-line remediations
 iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
 mobile-use ios sign-wda           # iOS: re-sign WebDriverAgent (the #1 setup blocker)
-mobile-use ios build-wda          # iOS: build the WDA test target (first-run setup)
+mobile-use ios build-wda         ~ # iOS: build the WDA test target (first-run setup)
 mobile-use quickstart --autostart-appium   # spawn Appium server in background
 ```
 
@@ -280,6 +280,45 @@ mobile-use agent --session mytest   # named session
 ```
 
 Inside the agent REPL, all helpers are pre-imported. Extra bindings: `agent`, `session`, `perceive()`, `act()`.
+
+### Faster perception — local detection (skip the VLM)
+
+The agent loop's hotspot is the VLM round-trip on every step. Three OFF-by-default
+layers cut it down, each degrading cleanly to the next (`yolo → template → tree → VLM`):
+
+```bash
+# 1. Perception/action cache (ON by default): a repeated identical screen replays the
+#    last action and skips the LLM. Disable with MU_PERCEPTION_CACHE=0.
+
+# 2. Template matcher — grounds tree-less screens (games/canvas/web views) from
+#    captured element crops. Needs the [detection] extra:
+pip install 'mobile-use[detection]'
+MU_LOCAL_DETECTOR=1 mobile-use agent --ios
+
+# 3. Trained YOLO-nano detector — the primary local grounding path (one forward pass).
+#    Distill a detector from the self-labeling dataset (every grounded tap records a
+#    free training sample), then serve it:
+pip install 'mobile-use[yolo]'
+mobile-use train-detector --train --epochs 80          # -> runs/train/weights/best.pt
+MU_YOLO_DETECTOR=1 MU_DETECTOR_WEIGHTS=runs/train/weights/best.pt mobile-use agent --ios
+
+# Let a confident, task-named match TAP DIRECTLY and skip the VLM for that step (even
+# when the tree exists). OFF by default — a wrong match is a real tap with no VLM gate:
+MU_LOCAL_SHORTCIRCUIT=1 MU_YOLO_DETECTOR=1 MU_DETECTOR_WEIGHTS=best.pt mobile-use agent
+```
+
+Measure the win on real screenshots (modeled VLM latency, real local wall-clock):
+
+```bash
+mobile-use bench-perception                              # synthetic (modeled) baseline
+mobile-use bench-perception --images ./shots --weights best.pt   # REAL measured
+```
+
+No device or labels yet? Generate a synthetic seed dataset to exercise the whole
+`dataset → train → weights → ground` pipeline (`mobile_use.synthetic_ui.generate_seed_dataset`).
+Confidence gate for both detectors: `MU_DETECTOR_MIN_CONF` (default `0.78`). See
+[SETUP.md](SETUP.md) for the full env-var reference (and the `polars-lts-cpu` note for
+training on older CPUs).
 
 ### Multi-device (DevicePool)
 

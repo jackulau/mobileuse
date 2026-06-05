@@ -32,7 +32,7 @@ dependencies = [
 # harness runs fine without these; they only enable the pixel-matching fast path
 # and YOLO distillation.
 detection = [
-    "opencv-python>=4.8",   # multi-scale template + ORB element matching
+    "opencv-python>=4.8",   # multi-scale template element matching
     "numpy>=1.24",
 ]
 yolo = [

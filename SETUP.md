@@ -758,3 +758,66 @@ locally.
 - **Want input control too?** The viewer is read-only by design. Drive
   input from a separate process via the Python API (e.g.
   `DevicePool.from_connected().broadcast(lambda d: d.tap_at_xy(...))`).
+
+# Part F — Faster perception & local detection
+
+The agent loop's per-step cost is dominated by the VLM round-trip. Three
+OFF-by-default layers ground elements locally and skip it, each degrading
+cleanly to the next (`yolo → template → tree → VLM`). All optional deps are
+import-guarded — with them absent every layer is a clean no-op, so the base
+install (and CI) is unaffected.
+
+## F1. The layers
+
+| Layer | Enable | Needs | What it does |
+|-------|--------|-------|--------------|
+| Perception/action cache | `MU_PERCEPTION_CACHE=1` (default ON) | nothing | Replays the last action on a repeated identical screen; skips the LLM. |
+| Template matcher | `MU_LOCAL_DETECTOR=1` | `pip install 'mobile-use[detection]'` | Pixel-matches captured element crops; grounds tree-less screens (games/canvas/web views). |
+| Trained YOLO detector | `MU_YOLO_DETECTOR=1` + `MU_DETECTOR_WEIGHTS=<best.pt>` | `pip install 'mobile-use[yolo]'` | One-forward-pass detector distilled from the self-labeling dataset; the primary local grounding path. |
+| VLM short-circuit | `MU_LOCAL_SHORTCIRCUIT=1` | a detector (above) | Lets a confident, **task-named** match tap directly and skip the VLM for that step, even when the tree exists. |
+
+Confidence gate for both detectors: `MU_DETECTOR_MIN_CONF` (default `0.78`).
+
+> **Safety:** `MU_LOCAL_SHORTCIRCUIT` is the one risky knob — a wrong match
+> becomes a real tap with no VLM in the loop. It fires only on a *single*,
+> confidence-gated detection whose label is named by the task, and it is OFF
+> by default. Leave it off unless your detector is well-calibrated for your app.
+
+## F2. Train a detector
+
+Every grounded tap during an agent run records a free training sample (the
+accessibility tree IS the labeler). Distill them into a YOLO-nano:
+
+```bash
+pip install 'mobile-use[yolo]'
+mobile-use train-detector                       # build a YOLO dataset from captured data
+mobile-use train-detector --train --epochs 80   # also train -> runs/train/weights/best.pt
+```
+
+No device or captured data yet? Generate a synthetic seed dataset to exercise
+the whole `dataset → train → weights → ground` pipeline end-to-end:
+
+```python
+from mobile_use.synthetic_ui import generate_seed_dataset
+samples = generate_seed_dataset("seed-ds", n=16, seed=0)   # rendered labelled UI screens
+```
+
+**Older-CPU note (training only):** `ultralytics` pulls in `polars`, whose
+default wheel uses CPU instructions some older machines lack — training then
+dies with `Illegal instruction (SIGILL)` at the end of the first epoch. Fix:
+
+```bash
+pip uninstall -y polars && pip install polars-lts-cpu
+```
+
+## F3. Measure the win
+
+```bash
+mobile-use bench-perception                                  # synthetic (modeled) baseline
+mobile-use bench-perception --images ./shots --weights best.pt   # REAL measured grounding
+```
+
+The measured mode times the local detector over real screenshots and reports
+how many screens it grounds (each one skips the VLM round-trip). Millisecond
+figures are reported for humans; the deterministic surface is the LLM-call
+reduction.

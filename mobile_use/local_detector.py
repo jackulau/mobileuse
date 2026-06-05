@@ -2,7 +2,7 @@
 
 Given a library of labeled element crops (from the self-labeling dataset, B2),
 locate a known element on a fresh screenshot with OpenCV multi-scale template
-matching (fast, robust to scale) plus an ORB feature-match fallback. The result
+matching (fast, robust to scale). The result
 is confidence-gated: below threshold it returns None and the caller falls back
 to the accessibility tree / VLM. Because it matches pixels — not accessibility
 nodes — it also works on tree-less screens (games, canvas, web views), which is

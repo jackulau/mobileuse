@@ -305,6 +305,16 @@ DATA:
   mobile-use export-training [FILE]    export training data to JSONL
   mobile-use training-stats            show training data summary
 
+PERCEPTION & LOCAL DETECTION (faster grounding, fewer VLM calls):
+  mobile-use bench-perception          before/after perception latency (synthetic)
+  mobile-use bench-perception --images DIR [--weights best.pt]
+                                       REAL measured local grounding over screenshots
+  mobile-use train-detector [--train]  distill self-labeled data into a YOLO-nano
+                                       (needs `pip install 'mobile-use[yolo]'`)
+  env: MU_LOCAL_DETECTOR=1 (template matcher) · MU_YOLO_DETECTOR=1 +
+       MU_DETECTOR_WEIGHTS=best.pt (trained detector) · MU_LOCAL_SHORTCIRCUIT=1
+       (skip the VLM on confident known elements) · MU_DETECTOR_MIN_CONF (gate)
+
 OPTIONS:
   --name <NAME>           Named daemon for multiboxing (per-device socket + session).
   --remote-daemon <URI>   Client-only mode — drive a remote daemon over TCP.
