@@ -116,6 +116,76 @@ def test_train_skips_cleanly_without_ultralytics(tmp_path, monkeypatch):
     assert "ultralytics" in res["reason"]
 
 
+def _fake_ultralytics(write_weights=True):
+    """A stand-in ultralytics module so the train() output-validation path is testable
+    without the real (heavy, CI-absent) dep. Its YOLO.train writes a stub best.pt and
+    its predict() runs clean, so validate_weights() succeeds iff the file was written."""
+    import types
+    fake = types.ModuleType("ultralytics")
+
+    class _Trainer:
+        best = None
+
+    class FakeYOLO:
+        def __init__(self, model):
+            self.trainer = _Trainer()
+
+        def train(self, **kw):
+            sd = Path(kw["project"]) / "train"
+            (sd / "weights").mkdir(parents=True, exist_ok=True)
+            if write_weights:
+                (sd / "weights" / "best.pt").write_bytes(b"stub-checkpoint")
+            return types.SimpleNamespace(save_dir=str(sd))
+
+        def predict(self, **kw):
+            return []
+
+    fake.YOLO = FakeYOLO
+    return fake
+
+
+def test_validate_weights_false_on_missing_or_absent():
+    # Self-validation never raises; a missing/empty path is simply not a usable model.
+    assert callable(td.validate_weights)
+    assert td.validate_weights("") is False
+    assert td.validate_weights("/no/such/checkpoint.pt") is False
+
+
+def test_train_aborts_on_empty_dataset(tmp_path):
+    # Preflight must fire BEFORE ultralytics is consulted, regardless of whether it
+    # is installed — an empty run would otherwise error mid-train.
+    out = tmp_path / "empty"
+    build_yolo_dataset([], out)
+    res = train(str(out), epochs=1)
+    assert res["status"] == "empty_dataset"
+    assert res["images"] == 0 and res["boxes"] == 0
+
+
+def test_train_reports_trained_only_after_weights_validate(tmp_path, monkeypatch):
+    import sys
+    out = tmp_path / "ds"
+    build_yolo_dataset(_samples(tmp_path), out)
+    monkeypatch.setitem(sys.modules, "ultralytics", _fake_ultralytics(write_weights=True))
+    monkeypatch.setattr(td, "available", lambda: True)
+    res = train(str(out), epochs=1)
+    assert res["status"] == "trained"
+    assert res["verified"] is True
+    assert res["weights"].endswith("best.pt")
+
+
+def test_train_reports_unverified_when_checkpoint_absent(tmp_path, monkeypatch):
+    import sys
+    out = tmp_path / "ds"
+    build_yolo_dataset(_samples(tmp_path), out)
+    # YOLO.train writes NO weights -> resolved best.pt does not exist -> not 'trained'.
+    monkeypatch.setitem(sys.modules, "ultralytics", _fake_ultralytics(write_weights=False))
+    monkeypatch.setattr(td, "available", lambda: True)
+    res = train(str(out), epochs=1)
+    assert res["status"] == "trained_unverified"
+    assert res["verified"] is False
+    assert "reason" in res
+
+
 def test_available_is_bool():
     assert isinstance(available(), bool)
 

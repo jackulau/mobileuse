@@ -150,16 +150,83 @@ def build_yolo_dataset(samples, out_dir, single_class=False):
             "train_images": len(train_stems), "val_images": len(val_stems)}
 
 
+def _dataset_counts(dataset_dir):
+    """Count built (images, boxes) on disk — the train() empty-dataset preflight.
+
+    Reads the materialized ``images/*.png`` + ``labels/*.txt`` so the check reflects
+    what ultralytics would actually see, not the pre-filter sample list.
+    """
+    img_dir, lbl_dir = Path(dataset_dir) / "images", Path(dataset_dir) / "labels"
+    n_images = len(list(img_dir.glob("*.png"))) if img_dir.is_dir() else 0
+    n_boxes = 0
+    if lbl_dir.is_dir():
+        for txt in lbl_dir.glob("*.txt"):
+            try:
+                n_boxes += sum(1 for ln in txt.read_text(encoding="utf-8").splitlines()
+                               if ln.strip())
+            except OSError:
+                continue
+    return {"images": n_images, "boxes": n_boxes}
+
+
+def validate_weights(weights, sample_image=None):
+    """True iff ``weights`` exists AND loads as a model AND runs one inference clean.
+
+    This is the post-train self-check: a path that ``os.path.exists`` but is a
+    truncated/incompatible checkpoint, or a model that cannot run a forward pass,
+    is NOT a usable detector — so we actually load it and predict on a tiny dummy
+    image. Returns False (never raises) when ultralytics is absent, the file is
+    missing, or anything fails, so callers can gate on a real, loadable model.
+    """
+    try:
+        if not weights or not os.path.exists(weights):
+            return False
+        model = load_detector(weights)
+        if model is None:
+            return False
+        img, tmp = sample_image, None
+        if img is None:
+            import tempfile
+
+            from PIL import Image
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.close()
+            Image.new("RGB", (64, 64), (0, 0, 0)).save(tmp.name)
+            img = tmp.name
+        try:
+            model.predict(source=img, verbose=False)
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+        return True
+    except Exception:
+        return False
+
+
 def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None,
           **train_kwargs):
-    """Train a YOLOv8-nano on a built dataset. Import-guarded.
+    """Train a YOLOv8-nano on a built dataset. Import-guarded + self-validating.
 
-    Returns ``{"status": "skipped", ...}`` when ultralytics is absent so callers
-    never crash on installs without the ``[yolo]`` extra; otherwise trains and
-    returns ``{"status": "trained", "weights": <best.pt>}``. Extra ``train_kwargs``
-    (e.g. ``seed``, ``deterministic``, ``batch``, ``patience``) pass through to
-    ``ultralytics``'s trainer for reproducible / bounded runs.
+    Preflights the built dataset and returns ``{"status": "empty_dataset", ...}``
+    when there are no images/boxes (never hands ultralytics an empty run that would
+    error mid-train). Returns ``{"status": "skipped", ...}`` when ultralytics is
+    absent so callers never crash on installs without the ``[yolo]`` extra. After a
+    real run it loads + runs one inference on the produced checkpoint and only
+    reports ``{"status": "trained"}`` when that succeeds — otherwise
+    ``{"status": "trained_unverified", "reason": ...}`` with the real weights path,
+    so a missing/corrupt checkpoint is never silently reported as success. Extra
+    ``train_kwargs`` (e.g. ``seed``, ``deterministic``, ``batch``, ``patience``)
+    pass through to ``ultralytics``'s trainer for reproducible / bounded runs.
     """
+    counts = _dataset_counts(dataset_dir)
+    if counts["images"] == 0 or counts["boxes"] == 0:
+        return {"status": "empty_dataset",
+                "reason": "dataset has no images/boxes — capture self-labeled samples "
+                          "first (run the agent) before training",
+                "images": counts["images"], "boxes": counts["boxes"]}
     if not available():
         return {"status": "skipped",
                 "reason": "ultralytics not installed — `pip install 'mobile-use[yolo]'`"}
@@ -167,15 +234,21 @@ def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None,
 
     data = str(Path(dataset_dir) / "data.yaml")
     project = project or str(Path(dataset_dir) / "runs")
-    yolo = YOLO(model)
+    yolo = YOLO(_resolve_base_model(model))
     result = yolo.train(data=data, epochs=epochs, imgsz=imgsz,
                         project=project, verbose=False, **train_kwargs)
     # ultralytics writes the actual checkpoints to <save_dir>/weights/{best,last}.pt;
     # result.save_dir is only the RUN directory, so resolve the real weights file.
     save_dir = getattr(result, "save_dir", None) or project
     weights = _resolve_weights(save_dir, yolo)
-    return {"status": "trained", "data": data, "epochs": epochs,
-            "save_dir": str(save_dir), "weights": weights}
+    verified = validate_weights(weights)
+    out = {"status": "trained" if verified else "trained_unverified",
+           "data": data, "epochs": epochs, "save_dir": str(save_dir),
+           "weights": weights, "verified": verified}
+    if not verified:
+        out["reason"] = ("training finished but the checkpoint at the reported path is "
+                         "missing or failed to load + run one inference")
+    return out
 
 
 def _resolve_weights(save_dir, yolo=None):
@@ -194,6 +267,27 @@ def _resolve_weights(save_dir, yolo=None):
     if last.exists():
         return str(last)
     return str(best)
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_base_model(model):
+    """Resolve a bare base-model filename to the committed repo-root copy if present.
+
+    ultralytics treats a bare ``"yolov8n.pt"`` as relative-to-CWD and, when absent,
+    silently downloads it from the network. The repo ships ``yolov8n.pt`` at its root,
+    so prefer that local copy: offline training never triggers an implicit download.
+    A path with a directory component, or one that already exists as given, is left
+    untouched (caller knows where their weights are).
+    """
+    if not model:
+        return model
+    p = Path(model)
+    if p.exists() or len(p.parts) > 1:
+        return str(model)
+    local = _REPO_ROOT / p.name
+    return str(local) if local.exists() else str(model)
 
 
 def load_detector(weights):
@@ -347,10 +441,19 @@ def train_main(argv):
 
     if do_train:
         res = train(stats["dataset_dir"], epochs=epochs)
-        if res["status"] == "skipped":
+        status = res["status"]
+        if status == "skipped":
             print(f"Training skipped: {res['reason']}")
             return 0
-        print(f"Trained -> {res.get('save_dir')}")
+        if status == "empty_dataset":
+            print(f"Training aborted: {res['reason']}")
+            return 1
+        if status == "trained":
+            print(f"Trained + verified -> {res.get('weights')}")
+        else:  # trained_unverified — do NOT report a missing/corrupt checkpoint as success
+            print(f"WARNING: training finished but the checkpoint is unverified "
+                  f"({res.get('reason')}) -> {res.get('weights')}")
+            return 1
     else:
         print("Add --train to train a yolov8n on it (needs `pip install 'mobile-use[yolo]'`).")
     return 0
