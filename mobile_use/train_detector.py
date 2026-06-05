@@ -29,18 +29,39 @@ def available():
         return False
 
 
-def _render_data_yaml(dataset_dir, classes):
-    """Render a minimal YOLO data.yaml (index: name form tolerates spaces in labels)."""
+def _render_data_yaml(dataset_dir, classes, train="train.txt", val="val.txt"):
+    """Render a minimal YOLO data.yaml (index: name form tolerates spaces in labels).
+
+    ``train``/``val`` are image-list files (relative to ``path``) so validation runs
+    on a HELD-OUT split, not the training images. Images stay in a flat ``images/``
+    dir; ultralytics finds each label by swapping ``/images/``->``/labels/`` + ``.txt``.
+    """
     lines = [
         f"path: {Path(dataset_dir).resolve()}",
-        "train: images",
-        "val: images",
+        f"train: {train}",
+        f"val: {val}",
         f"nc: {len(classes)}",
         "names:",
     ]
     for i, name in enumerate(classes):
         lines.append(f"  {i}: {name}")
     return "\n".join(lines) + "\n"
+
+
+def _split_train_val(stems, val_fraction=0.2):
+    """Deterministic held-out split of sorted image stems -> (train, val) lists.
+
+    val gets the trailing ``max(1, round(n*val_fraction))`` of the SORTED stems when
+    there are >=2 images (so val != train); with a single image it cannot be held out,
+    so both splits get it (a degenerate but non-crashing fallback).
+    """
+    ordered = sorted(stems)
+    n = len(ordered)
+    if n < 2:
+        return list(ordered), list(ordered)
+    n_val = max(1, round(n * val_fraction))
+    n_val = min(n_val, n - 1)  # always leave >=1 in train
+    return ordered[:-n_val], ordered[-n_val:]
 
 
 def build_yolo_dataset(samples, out_dir, single_class=False):
@@ -80,6 +101,8 @@ def build_yolo_dataset(samples, out_dir, single_class=False):
             return index.get(s.get("label") or "ui_element", 0)
 
     n_img = n_box = 0
+    used_stems = {}          # base-stem -> count, to dedupe colliding basenames
+    written_stems = []       # the actual (unique) stems written, for the split
     for shot, grp in by_image.items():
         try:
             with Image.open(shot) as im:
@@ -88,7 +111,15 @@ def build_yolo_dataset(samples, out_dir, single_class=False):
             continue
         if width <= 0 or height <= 0:
             continue
-        stem = Path(shot).stem
+        # Dedupe stem collisions: two different-path screenshots sharing a basename
+        # would otherwise overwrite last-writer-wins, silently dropping training data.
+        base = Path(shot).stem
+        if base in used_stems:
+            used_stems[base] += 1
+            stem = f"{base}-{used_stems[base]}"
+        else:
+            used_stems[base] = 0
+            stem = base
         shutil.copy2(shot, img_dir / f"{stem}.png")
         lines = []
         for s in grp:
@@ -102,12 +133,21 @@ def build_yolo_dataset(samples, out_dir, single_class=False):
             lines.append(f"{cls_of(s)} {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f}")
             n_box += 1
         (lbl_dir / f"{stem}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        written_stems.append(stem)
         n_img += 1
+
+    # Held-out split: write image-list files so val != train.
+    train_stems, val_stems = _split_train_val(written_stems)
+    (out / "train.txt").write_text(
+        "".join(f"{(img_dir / f'{s}.png').resolve()}\n" for s in train_stems), encoding="utf-8")
+    (out / "val.txt").write_text(
+        "".join(f"{(img_dir / f'{s}.png').resolve()}\n" for s in val_stems), encoding="utf-8")
 
     data_yaml = out / "data.yaml"
     data_yaml.write_text(_render_data_yaml(out, classes), encoding="utf-8")
     return {"images": n_img, "boxes": n_box, "classes": classes,
-            "data_yaml": str(data_yaml), "dataset_dir": str(out)}
+            "data_yaml": str(data_yaml), "dataset_dir": str(out),
+            "train_images": len(train_stems), "val_images": len(val_stems)}
 
 
 def train(dataset_dir, epochs=10, imgsz=640, model="yolov8n.pt", project=None):

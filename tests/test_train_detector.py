@@ -75,6 +75,37 @@ def test_empty_samples_yield_empty_dataset(tmp_path):
     assert (tmp_path / "empty" / "data.yaml").exists()
 
 
+def test_held_out_split_is_disjoint(tmp_path):
+    # 5 distinct images -> train.txt and val.txt must not overlap, both non-empty.
+    samples = [{"screenshot": _make_png(tmp_path / f"s{i}.png"), "bbox": [1, 1, 10, 10],
+                "label": "Btn"} for i in range(5)]
+    out = tmp_path / "ds"
+    stats = build_yolo_dataset(samples, out)
+    assert stats["images"] == 5
+    assert "train: train.txt" in (out / "data.yaml").read_text()
+    assert "val: val.txt" in (out / "data.yaml").read_text()
+    train = set((out / "train.txt").read_text().split())
+    val = set((out / "val.txt").read_text().split())
+    assert train and val
+    assert train.isdisjoint(val)                # held-out: never validate on train
+    assert stats["train_images"] + stats["val_images"] == 5
+
+
+def test_stem_collision_is_deduped(tmp_path):
+    # Two DIFFERENT screenshots sharing a basename must both survive (no overwrite).
+    d1, d2 = tmp_path / "s1", tmp_path / "s2"
+    d1.mkdir(); d2.mkdir()
+    a1 = _make_png(d1 / "screen.png")
+    a2 = _make_png(d2 / "screen.png")
+    out = tmp_path / "ds"
+    stats = build_yolo_dataset(
+        [{"screenshot": a1, "bbox": [1, 1, 10, 10], "label": "A"},
+         {"screenshot": a2, "bbox": [2, 2, 10, 10], "label": "B"}], out)
+    assert stats["images"] == 2                 # neither silently dropped
+    pngs = sorted(p.name for p in (out / "images").glob("*.png"))
+    assert len(pngs) == 2 and pngs[0] != pngs[1]
+
+
 def test_train_skips_cleanly_without_ultralytics(tmp_path, monkeypatch):
     # Force the absent path regardless of the host (ultralytics may or may not exist).
     monkeypatch.setattr(td, "available", lambda: False)
