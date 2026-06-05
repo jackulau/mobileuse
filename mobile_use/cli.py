@@ -504,13 +504,8 @@ def main():
         sys.exit(train_main(remaining[1:]))
 
     if remaining and remaining[0] == "bench-perception":
-        from .perception_cache import synthetic_benchmark
-        r = synthetic_benchmark()
-        print(f"Perception cache benchmark ({r['steps']} steps @ {r['llm_latency_ms']}ms/LLM call):")
-        print(f"  baseline (no cache): {r['baseline_ms']}ms, {r['llm_calls_baseline']} LLM calls")
-        print(f"  cached             : {r['cached_ms']}ms, {r['llm_calls_cached']} LLM calls")
-        print(f"  speedup            : {r['speedup']}x")
-        return
+        from .perception_cache import bench_main
+        sys.exit(bench_main(remaining[1:]))
 
     if remaining and remaining[0] == "training-stats":
         from .collector import training_stats

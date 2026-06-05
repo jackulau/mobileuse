@@ -234,3 +234,35 @@ def test_check_env_skips_when_env_file_exists(monkeypatch, tmp_path):
     # Pretend .env exists (so user has run init)
     monkeypatch.setattr(cli.os.path, "exists", lambda p: True)
     assert cli._check_env_for_platform("ios") is None
+
+
+# ---- D8/D12: bench-perception + train-detector subcommand dispatch -------------
+
+def test_bench_perception_synthetic_dispatch():
+    rc, out, _ = _run_cli("bench-perception")
+    assert rc == 0
+    assert "Perception cache benchmark" in out
+    assert "speedup" in out
+
+
+def test_bench_perception_help_exits_zero():
+    rc, out, _ = _run_cli("bench-perception", "--help")
+    assert rc == 0
+    assert "bench-perception" in out
+    assert "--images" in out                      # real-measured mode is documented
+
+
+def test_bench_perception_images_measured_dispatch(tmp_path):
+    from mobile_use.synthetic_ui import generate_seed_dataset
+    generate_seed_dataset(tmp_path / "ds", n=3, seed=4)
+    shots = tmp_path / "ds" / "screenshots"
+    rc, out, _ = _run_cli("bench-perception", "--images", str(shots))
+    assert rc == 0
+    assert "Measured perception benchmark over 3 images" in out
+    assert "LLM calls baseline" in out
+
+
+def test_train_detector_help_dispatch():
+    rc, out, _ = _run_cli("train-detector", "--help")
+    assert rc == 0
+    assert "train-detector" in out

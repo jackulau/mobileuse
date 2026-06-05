@@ -209,3 +209,107 @@ def synthetic_benchmark(llm_latency_ms=120.0, steps=10, repeats_same_screen=True
         "llm_calls_baseline": base_calls,
         "llm_calls_cached": cached_calls,
     }
+
+
+def _gather_images(arg):
+    """Resolve a dir or glob pattern to a sorted list of image paths."""
+    import glob
+    import os
+    if os.path.isdir(arg):
+        pats = [os.path.join(arg, "*.png"), os.path.join(arg, "*.jpg")]
+    else:
+        pats = [arg]
+    out = []
+    for p in pats:
+        out.extend(glob.glob(p))
+    return sorted(out)
+
+
+def _build_locator(weights=None):
+    """Best available local grounding locator (YOLO if weights+dep, else template). None.
+
+    All optional deps imported lazily so this module stays pure-stdlib at import time.
+    """
+    # Prefer a trained YOLO detector when weights (or MU_DETECTOR_WEIGHTS) + dep exist.
+    try:
+        import os
+        from mobile_use.train_detector import YoloDetector, available as yolo_available
+        w = weights or os.environ.get("MU_DETECTOR_WEIGHTS")
+        if w and yolo_available() and os.path.exists(w):
+            det = YoloDetector(w)
+            if det.available():
+                return det
+    except Exception:
+        pass
+    # Fall back to the template matcher built from captured/seed samples.
+    try:
+        from mobile_use.local_detector import LocalElementMatcher, available as tm_available
+        if tm_available():
+            m = LocalElementMatcher.from_session()
+            if m.template_count:
+                return m
+    except Exception:
+        pass
+    return None
+
+
+_BENCH_USAGE = (
+    "mobile-use bench-perception — before/after perception latency.\n\n"
+    "USAGE:\n"
+    "  mobile-use bench-perception                     synthetic (modeled LLM calls)\n"
+    "  mobile-use bench-perception --images DIR|GLOB   REAL measured local grounding\n"
+    "  mobile-use bench-perception --images DIR --weights best.pt   use a trained YOLO\n"
+    "  mobile-use bench-perception --synthetic         force the modeled benchmark\n\n"
+    "With --images, times the local detector/matcher (real wall-clock) over actual\n"
+    "screenshots and reports how many skip the VLM round-trip. Without it, falls back\n"
+    "to the deterministic modeled benchmark. Measured ms are reported, not asserted.\n"
+)
+
+
+def bench_main(argv):
+    """`mobile-use bench-perception [--images DIR|GLOB] [--weights P] [--synthetic]`."""
+    argv = list(argv or [])
+    if argv and argv[0] in {"-h", "--help"}:
+        print(_BENCH_USAGE)
+        return 0
+    images_arg = weights = None
+    force_synthetic = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--images" and i + 1 < len(argv):
+            images_arg = argv[i + 1]; i += 1
+        elif a == "--weights" and i + 1 < len(argv):
+            weights = argv[i + 1]; i += 1
+        elif a == "--synthetic":
+            force_synthetic = True
+        i += 1
+
+    if images_arg and not force_synthetic:
+        images = _gather_images(images_arg)
+        if not images:
+            print(f"No images matched {images_arg!r}.")
+            return 1
+        locator = _build_locator(weights)
+        if locator is None:
+            print("No local detector available (need [yolo]+--weights or [detection]+"
+                  "captured samples) — reporting VLM-only baseline.")
+        r = measured_benchmark(images, locator=locator)
+        print(f"Measured perception benchmark over {r['images']} images "
+              f"(VLM @ {r['vlm_latency_ms']}ms/call):")
+        print(f"  grounded locally   : {r['grounded']}/{r['images']} "
+              f"(skip the VLM round-trip)")
+        print(f"  LLM calls baseline : {r['llm_calls_baseline']}")
+        print(f"  LLM calls w/ local : {r['llm_calls_local']}")
+        print(f"  local compute      : {r['measured_local_compute_ms']}ms measured")
+        print(f"  baseline (modeled) : {r['baseline_ms']}ms")
+        print(f"  local total        : {r['local_total_ms']}ms")
+        print(f"  speedup            : {r['speedup']}x")
+        return 0
+
+    r = synthetic_benchmark()
+    print(f"Perception cache benchmark ({r['steps']} steps @ {r['llm_latency_ms']}ms/LLM call):")
+    print(f"  baseline (no cache): {r['baseline_ms']}ms, {r['llm_calls_baseline']} LLM calls")
+    print(f"  cached             : {r['cached_ms']}ms, {r['llm_calls_cached']} LLM calls")
+    print(f"  speedup            : {r['speedup']}x")
+    return 0
