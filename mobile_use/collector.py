@@ -20,6 +20,19 @@ DATA_DIR = Path(os.environ.get(
 )).expanduser()
 
 
+def _valid_bbox(bbox):
+    """True iff ``bbox`` is a 4-tuple of (x, y, w, h) with x,y >= 0 and w,h > 0.
+
+    Capture-time guard: a degenerate or negative box would be persisted and only
+    dropped much later in ``build_yolo_dataset`` (silent data loss). Reject it here.
+    """
+    try:
+        x, y, w, h = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return False
+    return x >= 0 and y >= 0 and w > 0 and h > 0
+
+
 class Collector:
     """Collects perception events for model training."""
 
@@ -38,6 +51,7 @@ class Collector:
         self._detections_path = self._dir / f"{self._date}_detections.jsonl"
         self._crops_dir = self._dir / "crops"
         self._detection_count = 0
+        self._detection_invalid_count = 0   # degenerate boxes rejected at capture time
 
     def record(self, screenshot_path=None, ui_tree=None, active_app=None,
                window_size=None, action=None, target_element=None,
@@ -119,7 +133,14 @@ class Collector:
         box is scaled to pixel space (``scale = image_width / window_width``) and
         stored as ``bbox`` (the canonical training box), with the original kept as
         ``bbox_logical``. A cropped PNG of the region is saved when PIL is available.
+
+        A degenerate box (wrong shape, negative origin, or non-positive size) is
+        rejected here and counted in ``_detection_invalid_count`` — returning None —
+        so it never pollutes the dataset.
         """
+        if not _valid_bbox(bbox):
+            self._detection_invalid_count += 1
+            return None
         ts = time.time()
         event = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -185,6 +206,11 @@ class Collector:
     @property
     def detection_count(self):
         return self._detection_count
+
+    @property
+    def detection_invalid_count(self):
+        """How many detection samples were rejected at capture for a degenerate box."""
+        return self._detection_invalid_count
 
     @property
     def detections_path(self):

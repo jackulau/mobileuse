@@ -28,6 +28,23 @@ def test_available_true_with_cv2():
     assert available() is True
 
 
+def test_from_samples_warns_when_zero_templates(capsys):
+    # Non-empty samples but every crop missing -> 0 templates -> a diagnostic surfaces
+    # (otherwise the caller silently gets an inert matcher with no hint why).
+    m = LocalElementMatcher.from_samples(
+        [{"label": "A", "crop": "/no/such/crop.png"},
+         {"label": "B", "crop": "/also/missing.png"}])
+    assert m.template_count == 0
+    assert "0 templates loaded" in capsys.readouterr().err
+
+
+def test_from_samples_silent_on_empty_input(capsys):
+    # Empty input is legitimate (nothing captured yet) -> no warning noise.
+    m = LocalElementMatcher.from_samples([])
+    assert m.template_count == 0
+    assert capsys.readouterr().err == ""
+
+
 def test_locate_finds_patch_at_right_center():
     scene, patch = _scene_with_patch()
     m = LocalElementMatcher(min_confidence=0.7)

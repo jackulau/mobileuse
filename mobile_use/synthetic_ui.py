@@ -65,7 +65,9 @@ def generate_seed_dataset(out_dir, n=8, seed=0, labels=DEFAULT_LABELS,
         font = None
 
     W, H = size
-    bw, bh = 96, 40                        # element box size (pixels)
+    # Element box size (pixels), clamped to fit the canvas so boxes stay in-frame even
+    # on a tiny canvas. No-op at the default size (96<=W-16, 40<=H-16).
+    bw, bh = min(96, max(8, W - 16)), min(40, max(8, H - 16))
     samples = []
     jsonl_lines = []
     for i in range(n):
@@ -92,6 +94,20 @@ def generate_seed_dataset(out_dir, n=8, seed=0, labels=DEFAULT_LABELS,
                           fill=(255, 255, 255), font=font)
             bbox = [float(x), float(y), float(bw), float(bh)]
             placed.append((label, bbox))
+
+        if not placed:
+            # Guarantee >=1 in-frame box per screen: a small canvas + large per_screen
+            # could otherwise emit a screen with zero labels (silent empty sample).
+            # Clamp a single box to fit even a tiny canvas.
+            fbw, fbh = min(bw, max(8, W - 16)), min(bh, max(8, H - 16))
+            x, y = 8, 8
+            label = labels[i % len(labels)]
+            draw.rounded_rectangle([x, y, x + fbw, y + fbh], radius=8, fill=_PALETTE[label])
+            if font is not None:
+                tw, th = _text_size(draw, label, font)
+                draw.text((x + (fbw - tw) / 2, y + (fbh - th) / 2), label,
+                          fill=(255, 255, 255), font=font)
+            placed.append((label, [float(x), float(y), float(fbw), float(fbh)]))
 
         img.save(shot_path)
 

@@ -35,6 +35,18 @@ def test_feeds_build_yolo_dataset(tmp_path):
     assert stats["train_images"] >= 1 and stats["val_images"] >= 1
 
 
+def test_guarantees_at_least_one_box_per_screen(tmp_path):
+    # A tiny canvas + large per_screen would otherwise break out of the layout loop
+    # with zero boxes — every screen must still emit >=1 in-frame, valid box.
+    s = generate_seed_dataset(tmp_path / "tiny", n=5, seed=2, size=(60, 60), per_screen=8)
+    screens = {r["screen_sig"] for r in s}
+    assert len(screens) == 5                       # one sig per generated screen
+    for r in s:
+        x, y, w, h = r["bbox"]
+        assert w > 0 and h > 0                      # valid, non-degenerate
+        assert x >= 0 and y >= 0 and x + w <= 60 and y + h <= 60   # in-frame
+
+
 def test_feeds_template_matcher(tmp_path):
     import pytest
     pytest.importorskip("cv2")

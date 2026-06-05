@@ -13,6 +13,7 @@ is import-guarded: with them absent, ``available()`` is False and ``locate()``
 returns None — a clean no-op, never an error.
 """
 import os
+import sys
 
 # Multi-scale search factors (template resized relative to its captured size).
 _SCALES = (1.0, 0.9, 1.1, 0.8, 1.25, 0.67, 1.5, 0.5)
@@ -67,12 +68,25 @@ class LocalElementMatcher:
 
     @classmethod
     def from_samples(cls, samples, min_confidence=_DEFAULT_MIN_CONFIDENCE):
-        """Build a matcher from B2 detection samples (each with ``crop`` + ``label``)."""
+        """Build a matcher from B2 detection samples (each with ``crop`` + ``label``).
+
+        Surfaces a diagnostic when samples were provided but ZERO templates loaded
+        (every crop missing/unreadable/uniform, or cv2 absent) — otherwise the caller
+        silently gets an inert matcher with no hint as to why local detection is dead.
+        """
         m = cls(min_confidence=min_confidence)
+        n_samples = 0
         for s in samples or []:
+            n_samples += 1
             crop = s.get("crop")
             if crop and os.path.exists(crop):
                 m.add_template(s.get("label", ""), crop)
+        if n_samples and m.template_count == 0:
+            reason = ("cv2 (opencv) not installed — `pip install 'mobile-use[detection]'`"
+                      if not available()
+                      else "every crop was missing, unreadable, or blank/uniform")
+            print(f"[mobile-use] local detector: 0 templates loaded from {n_samples} "
+                  f"sample(s) — {reason}. Visual short-circuit is inert.", file=sys.stderr)
         return m
 
     @classmethod

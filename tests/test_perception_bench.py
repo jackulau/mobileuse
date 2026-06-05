@@ -10,6 +10,19 @@ from mobile_use.perception_cache import measured_benchmark, synthetic_benchmark
 from tests.test_agent_run import _loop
 
 
+def test_build_locator_warns_on_rejected_configured_weights(monkeypatch, capsys):
+    # When weights ARE configured but the detector is rejected (missing file, or no
+    # ultralytics), _build_locator must say WHY rather than silently returning the
+    # VLM-only baseline.
+    import mobile_use.perception_cache as pc
+    monkeypatch.setenv("MU_DETECTOR_WEIGHTS", "/no/such/weights.pt")
+    pc._LOCATOR_WARNED.clear()
+    pc._build_locator()
+    err = capsys.readouterr().err
+    assert "perception locator:" in err
+    assert ("does not exist" in err) or ("ultralytics is not installed" in err)
+
+
 def test_synthetic_benchmark_cache_is_faster():
     r = synthetic_benchmark(llm_latency_ms=4.0, steps=12, repeats_same_screen=True)
     assert r["llm_calls_cached"] < r["llm_calls_baseline"]   # cache skipped LLM calls

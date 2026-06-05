@@ -16,7 +16,19 @@ No third-party deps — pure stdlib, so it is always on the fast path.
 """
 import hashlib
 import json
+import sys
 import time
+
+# One warning per distinct locator-rejection reason (no per-frame spam).
+_LOCATOR_WARNED = set()
+
+
+def _warn_locator_once(reason):
+    """Surface, once per distinct reason, WHY a configured detector was rejected."""
+    if reason not in _LOCATOR_WARNED:
+        _LOCATOR_WARNED.add(reason)
+        print(f"[mobile-use] perception locator: {reason}; falling back to VLM-only "
+              "grounding.", file=sys.stderr)
 
 
 def screen_signature(marks, app=None, quantum=8):
@@ -231,18 +243,26 @@ def _build_locator(weights=None):
     All optional deps imported lazily so this module stays pure-stdlib at import time.
     """
     # Prefer a trained YOLO detector when weights (or MU_DETECTOR_WEIGHTS) + dep exist.
-    try:
-        import os
-
-        from mobile_use.train_detector import YoloDetector
-        from mobile_use.train_detector import available as yolo_available
-        w = weights or os.environ.get("MU_DETECTOR_WEIGHTS")
-        if w and yolo_available() and os.path.exists(w):
-            det = YoloDetector(w)
-            if det.available():
-                return det
-    except Exception:
-        pass
+    # When weights ARE configured but the detector is rejected, say WHY (once) so a
+    # broken/incompatible checkpoint doesn't silently degrade to the VLM-only baseline.
+    import os
+    w = weights or os.environ.get("MU_DETECTOR_WEIGHTS")
+    if w:
+        try:
+            from mobile_use.train_detector import YoloDetector
+            from mobile_use.train_detector import available as yolo_available
+            if not yolo_available():
+                _warn_locator_once("weights configured but ultralytics is not installed "
+                                   "(`pip install 'mobile-use[yolo]'`)")
+            elif not os.path.exists(w):
+                _warn_locator_once(f"configured weights path does not exist: {w}")
+            else:
+                det = YoloDetector(w)
+                if det.available():
+                    return det
+                _warn_locator_once(f"configured weights {w} present but did not load")
+        except Exception as e:
+            _warn_locator_once(f"YOLO locator build failed ({type(e).__name__}: {e})")
     # Fall back to the template matcher built from captured/seed samples.
     try:
         from mobile_use.local_detector import LocalElementMatcher

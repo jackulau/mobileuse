@@ -17,6 +17,18 @@ def sandbox(monkeypatch, tmp_path):
     return tmp_path
 
 
+def test_degenerate_bbox_rejected_at_capture(sandbox):
+    c = Collector(session_name="capbad", platform="android")
+    # zero/negative size, negative origin, and wrong shape are all rejected at capture
+    for bad in [(0, 0, 0, 10), (0, 0, 10, 0), (-1, 0, 10, 10), (0, -5, 10, 10), (1, 2, 3)]:
+        assert c.record_detection_sample(screenshot_path=None, bbox=bad, label="X") is None
+    assert c.detection_count == 0
+    assert c.detection_invalid_count == 5
+    # a valid box still records normally
+    assert c.record_detection_sample(screenshot_path=None, bbox=(1, 2, 3, 4), label="Ok")
+    assert c.detection_count == 1
+
+
 def test_record_detection_writes_jsonl_row(sandbox):
     c = Collector(session_name="cap", platform="ios")
     ev = c.record_detection_sample(
