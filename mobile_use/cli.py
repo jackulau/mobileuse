@@ -282,9 +282,11 @@ RUN SCRIPTS:
   mobile-use agent [--ios|--android]   persistent agent loop
 
 DIAGNOSE:
-  mobile-use --doctor                  diagnose all platforms
+  mobile-use --doctor                  diagnose all platforms (device connectivity)
   mobile-use --ios --doctor            iOS only
   mobile-use --android --doctor        Android only
+  mobile-use selfcheck [--train]       validate the harness itself — dep-rung matrix +
+                                       action surface + training smoke (device-free)
 
 SETUP & MAINTENANCE:
   mobile-use ios sign-wda [--check]    re-sign WebDriverAgent (iOS #1 blocker)

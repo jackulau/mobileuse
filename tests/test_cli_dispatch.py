@@ -129,6 +129,22 @@ def test_doctor_runs_to_completion():
     assert "android-harness" in out or "Android" in out
 
 
+# ---- selfcheck subcommand -------------------------------------------------
+
+def test_selfcheck_runs_to_completion():
+    # Device-free harness self-validation: on a healthy tree it must reach the end
+    # and exit 0, distinct from the device-connectivity `--doctor`.
+    rc, out, _ = _run_cli("selfcheck")
+    assert rc == 0
+    assert "selfcheck" in out and "healthy" in out
+
+
+def test_selfcheck_help_returns_zero():
+    rc, out, _ = _run_cli("selfcheck", "--help")
+    assert rc == 0
+    assert "selfcheck" in out
+
+
 # ---- agent subcommand -----------------------------------------------------
 
 def test_agent_subcommand_dispatches():

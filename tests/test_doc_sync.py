@@ -79,3 +79,17 @@ def test_setup_documents_detection_layers():
     assert "MU_LOCAL_SHORTCIRCUIT" in SETUP
     assert "polars-lts-cpu" in SETUP            # the older-CPU training gotcha
     assert "[yolo]" in SETUP and "[detection]" in SETUP
+
+
+# ---- D9: self-validation + compatibility surface docs tie to code --------------
+
+def test_docs_document_selfcheck_command():
+    assert "selfcheck" in README
+    assert "selfcheck" in SETUP
+    assert "selfcheck" in CLI                   # advertised in the shipped HELP block
+
+
+def test_setup_documents_offline_base_model_and_self_validation():
+    assert "offline" in SETUP.lower()
+    assert "yolov8n.pt" in SETUP                # the committed base-model copy
+    assert "trained_unverified" in SETUP        # the honest post-train status

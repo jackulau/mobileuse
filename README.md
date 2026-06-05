@@ -320,6 +320,24 @@ Confidence gate for both detectors: `MU_DETECTOR_MIN_CONF` (default `0.78`). See
 [SETUP.md](SETUP.md) for the full env-var reference (and the `polars-lts-cpu` note for
 training on older CPUs).
 
+Training is **self-validating**: `train-detector --train` only reports `trained` after the
+produced checkpoint actually loads and runs one inference (else `trained_unverified`), aborts
+early on an empty dataset, and resolves the bare `yolov8n.pt` base model to the committed
+repo-root copy so an **offline** run never triggers an implicit download.
+
+### Self-check (validate the harness itself)
+
+```bash
+mobile-use selfcheck            # dep-rung matrix + action surface + training smoke (device-free)
+mobile-use selfcheck --train    # also run a bounded 1-epoch real YOLO train (needs [yolo])
+```
+
+`selfcheck` reports which local-grounding rungs are live (and *why not*), confirms the action
+verbs are consistent across platforms, and runs the synthetic `dataset → build → ground` smoke —
+exit 0 iff the core invariants hold. (For **device** connectivity use `mobile-use --doctor`.)
+Every action the agent dispatches is also **argument-validated before it runs** (unknown kwarg /
+missing required arg / non-numeric coordinate → a clean error, never a blind call into the daemon).
+
 ### Multi-device (DevicePool)
 
 Drive multiple iOS and Android devices simultaneously:

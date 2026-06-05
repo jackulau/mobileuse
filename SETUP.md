@@ -810,6 +810,17 @@ dies with `Illegal instruction (SIGILL)` at the end of the first epoch. Fix:
 pip uninstall -y polars && pip install polars-lts-cpu
 ```
 
+**Offline base model:** the repo ships `yolov8n.pt` at its root. `train-detector --train`
+resolves the bare base-model name to that committed copy, so training works **offline** and
+never triggers an implicit network download. Point `model=` at a path with a directory
+component to override.
+
+**Self-validating training:** `train` aborts early with `empty_dataset` when there are no
+images/boxes, and after a run it loads the produced checkpoint and runs one inference —
+reporting `trained` only when that succeeds, else `trained_unverified` (so a missing/corrupt
+checkpoint is never reported as success). A weights file that exists but cannot load is treated
+as **unavailable** (the harness degrades to the template/tree/VLM paths with a one-line warning).
+
 ## F3. Measure the win
 
 ```bash
@@ -821,3 +832,15 @@ The measured mode times the local detector over real screenshots and reports
 how many screens it grounds (each one skips the VLM round-trip). Millisecond
 figures are reported for humans; the deterministic surface is the LLM-call
 reduction.
+
+## F4. Self-check the harness
+
+```bash
+mobile-use selfcheck            # dep-rung matrix + action-surface + training smoke (device-free)
+mobile-use selfcheck --train    # also runs a bounded 1-epoch real YOLO train (needs [yolo])
+```
+
+`selfcheck` validates the harness's own internal consistency (which grounding rungs are live and
+*why not*, that the action verbs are consistent across iOS/Android, and that the synthetic
+`dataset → build → ground` pipeline works) — exit 0 iff the core invariants hold. It is distinct
+from `mobile-use --doctor`, which checks **device** connectivity.
