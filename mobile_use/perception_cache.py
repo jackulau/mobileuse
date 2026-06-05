@@ -105,6 +105,72 @@ class PerceptionCache:
         }
 
 
+def _run_locator(locator, image):
+    """Run any grounding locator on one image -> list of matches ([] on miss/None).
+
+    Accepts a YoloDetector (``predict``), a LocalElementMatcher (``locate_all``), or any
+    object exposing one of those — so the measured benchmark is agnostic to which local
+    grounding path is under test.
+    """
+    if locator is None:
+        return []
+    try:
+        if hasattr(locator, "predict"):
+            return locator.predict(image) or []
+        if hasattr(locator, "locate_all"):
+            return locator.locate_all(image) or []
+    except Exception:
+        return []
+    return []
+
+
+def measured_benchmark(images, locator=None, vlm_latency_ms=120.0):
+    """REAL wall-clock benchmark of local grounding over ACTUAL screenshots.
+
+    Unlike ``synthetic_benchmark`` (which models LLM calls), this times the local
+    grounding path with ``perf_counter`` on real image files. Each image the local
+    path GROUNDS (>=1 match) is one that can skip the VLM round-trip; ungrounded
+    images still pay the (modeled) VLM cost. The returned dict carries BOTH:
+
+      * a deterministic, count-based surface — ``images``, ``grounded``,
+        ``llm_calls_baseline`` (= images), ``llm_calls_local`` (= images - grounded) —
+        which tests assert on, and
+      * measured millisecond figures (``measured_local_compute_ms``, ``per_image_ms``,
+        ``local_total_ms``, ``speedup``) which are REPORTED for humans but must NEVER be
+        asserted as thresholds (wall-clock is flaky under load — see the bench history).
+    """
+    images = list(images or [])
+    n = len(images)
+    per_image_ms = []
+    grounded = 0
+    t_all = time.perf_counter()
+    for img in images:
+        t0 = time.perf_counter()
+        matches = _run_locator(locator, img)
+        per_image_ms.append(round((time.perf_counter() - t0) * 1e3, 3))
+        if matches:
+            grounded += 1
+    measured_local_compute_ms = round((time.perf_counter() - t_all) * 1e3, 3)
+
+    llm_calls_baseline = n
+    llm_calls_local = n - grounded
+    baseline_ms = n * vlm_latency_ms                              # modeled VLM-bound
+    local_total_ms = measured_local_compute_ms + llm_calls_local * vlm_latency_ms
+    return {
+        "mode": "measured",
+        "images": n,
+        "grounded": grounded,
+        "llm_calls_baseline": llm_calls_baseline,
+        "llm_calls_local": llm_calls_local,
+        "vlm_latency_ms": vlm_latency_ms,
+        "measured_local_compute_ms": measured_local_compute_ms,   # REAL (reported only)
+        "per_image_ms": per_image_ms,                             # REAL (reported only)
+        "baseline_ms": round(baseline_ms, 3),                     # modeled
+        "local_total_ms": round(local_total_ms, 3),               # measured + modeled
+        "speedup": round(baseline_ms / local_total_ms, 3) if local_total_ms else None,
+    }
+
+
 def synthetic_benchmark(llm_latency_ms=120.0, steps=10, repeats_same_screen=True):
     """Before/after latency of the decide loop, with vs without the action cache.
 
