@@ -87,6 +87,69 @@ def test_parse_results_warns_once_on_api_drift(capsys):
     assert err.count("YOLO result parsing failed") == 1   # surfaced exactly once
 
 
+def _fake_ultralytics_loader(raises=False, load_calls=None):
+    """Stand-in ultralytics whose YOLO() either loads or raises (a corrupt checkpoint)."""
+    import types
+    fake = types.ModuleType("ultralytics")
+
+    class FakeYOLO:
+        def __init__(self, weights):
+            if load_calls is not None:
+                load_calls.append(weights)
+            if raises:
+                raise RuntimeError("corrupt/incompatible checkpoint")
+
+        def predict(self, **kw):
+            return []
+
+    fake.YOLO = FakeYOLO
+    return fake
+
+
+def test_available_true_and_loads_at_most_once(tmp_path, monkeypatch):
+    import sys
+    w = tmp_path / "best.pt"
+    w.write_bytes(b"weights")
+    calls = []
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        _fake_ultralytics_loader(load_calls=calls))
+    monkeypatch.setattr(td, "available", lambda: True)
+    td._LOADABLE_CACHE.clear()
+    det = YoloDetector(str(w))
+    assert det.available() is True
+    assert det.available() is True            # second call served from cache
+    assert len(calls) == 1                    # loaded at most once per (path, mtime)
+
+
+def test_available_false_and_warns_once_on_unloadable(tmp_path, monkeypatch, capsys):
+    import sys
+    w = tmp_path / "bad.pt"
+    w.write_bytes(b"truncated")
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        _fake_ultralytics_loader(raises=True))
+    monkeypatch.setattr(td, "available", lambda: True)
+    td._LOADABLE_CACHE.clear()
+    td._unloadable_warned.clear()
+    det = YoloDetector(str(w))
+    assert det.available() is False           # exists but won't load -> not available
+    det.available()                           # repeat is cached, must not re-warn
+    err = capsys.readouterr().err
+    assert err.count("failed to load as a") == 1
+
+
+def test_from_env_none_on_unloadable_weights(tmp_path, monkeypatch):
+    import sys
+    w = tmp_path / "bad.pt"
+    w.write_bytes(b"truncated")
+    monkeypatch.setenv("MU_DETECTOR_WEIGHTS", str(w))
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        _fake_ultralytics_loader(raises=True))
+    monkeypatch.setattr(td, "available", lambda: True)
+    td._LOADABLE_CACHE.clear()
+    td._unloadable_warned.clear()
+    assert YoloDetector.from_env() is None     # corrupt checkpoint -> no detector
+
+
 def test_min_conf_env_default(monkeypatch):
     det = YoloDetector("x.pt")
     assert det.min_confidence == td._DEFAULT_MIN_CONFIDENCE

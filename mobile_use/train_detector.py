@@ -307,6 +307,21 @@ _DEFAULT_MIN_CONFIDENCE = float(os.environ.get("MU_DETECTOR_MIN_CONF", "0.78"))
 # One-shot guard so an ultralytics-API-drift warning is surfaced once, not per-frame.
 _parse_drift_warned = False
 
+# Loadability verdict cache keyed by (weights_path, mtime): the model is LOADED at most
+# once per file version, so the availability gate never reloads on every perceive.
+_LOADABLE_CACHE = {}
+# One warning per unloadable weights path (corrupt / incompatible checkpoint).
+_unloadable_warned = set()
+
+
+def _warn_unloadable(weights):
+    """Surface, once per path, that weights exist but cannot load as a valid model."""
+    if weights not in _unloadable_warned:
+        _unloadable_warned.add(weights)
+        print(f"[mobile-use] detector weights at {weights} exist but failed to load as a "
+              "valid model — YOLO grounding disabled. The checkpoint may be truncated or "
+              "from an incompatible ultralytics version.", file=sys.stderr)
+
 
 def _warn_parse_drift(exc):
     """Surface a YOLO Results-parsing failure ONCE on stderr (then stay quiet).
@@ -344,15 +359,45 @@ class YoloDetector:
 
     @classmethod
     def from_env(cls, min_confidence=None):
-        """Build from ``MU_DETECTOR_WEIGHTS``; None if unset/missing/ultralytics absent."""
+        """Build from ``MU_DETECTOR_WEIGHTS``; None if unset/missing/ultralytics absent/unloadable."""
         weights = os.environ.get("MU_DETECTOR_WEIGHTS")
         if not weights or not available() or not os.path.exists(weights):
             return None
-        return cls(weights, min_confidence=min_confidence)
+        det = cls(weights, min_confidence=min_confidence)
+        return det if det.available() else None     # corrupt/incompatible checkpoint -> None
+
+    def _loads(self):
+        """Cached check that the weights LOAD as a model — at most one load per (path, mtime).
+
+        Corrupt/incompatible checkpoint -> False + a one-time diagnostic, so the gate is
+        about USABILITY, not mere file presence. Cheap on repeat calls (memoized).
+        """
+        try:
+            key = (self.weights, os.path.getmtime(self.weights))
+        except OSError:
+            return False
+        cached = _LOADABLE_CACHE.get(key)
+        if cached is not None:
+            return cached
+        try:
+            ok = load_detector(self.weights) is not None
+        except Exception:
+            ok = False
+        if not ok:
+            _warn_unloadable(self.weights)
+        _LOADABLE_CACHE[key] = ok
+        return ok
 
     def available(self):
-        """True iff ultralytics is importable AND the weights file exists."""
-        return bool(available() and self.weights and os.path.exists(self.weights))
+        """True iff ultralytics importable, the weights file exists, AND it LOADS as a model.
+
+        'Available' means usable: a checkpoint that exists but cannot load (truncated /
+        incompatible version) is NOT available — it is warned once and gated off, so the
+        harness degrades to the template/tree/VLM paths instead of silently predicting [].
+        """
+        if not (available() and self.weights and os.path.exists(self.weights)):
+            return False
+        return self._loads()
 
     def load(self):
         """Lazily load the YOLO model (None when ultralytics absent)."""
