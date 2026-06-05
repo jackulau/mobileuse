@@ -208,6 +208,52 @@ def test_act_unknown_action_returns_error(tmp_path, monkeypatch):
     assert "Unknown action" in result["error"]
 
 
+def test_act_rejects_unknown_argument(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    h, _a = _install_fakes(monkeypatch, "ios")
+    from mobile_use.agent_loop import AgentLoop
+    loop = AgentLoop(platform="ios", session_name="arg-unknown", collect=False)
+    loop.start()
+    # tap_at_xy(x, y) has no 'z' — caught before dispatch, helper never called.
+    result = loop.act("tap_at_xy", x=10, y=20, z=99)
+    assert "error" in result and "unexpected argument" in result["error"]
+    assert not any(c[0] == "tap_at_xy" for c in h._calls)
+
+
+def test_act_rejects_missing_required_argument(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    h, _a = _install_fakes(monkeypatch, "ios")
+    from mobile_use.agent_loop import AgentLoop
+    loop = AgentLoop(platform="ios", session_name="arg-missing", collect=False)
+    loop.start()
+    # type_text(text) requires 'text'.
+    result = loop.act("type_text")
+    assert "error" in result and "missing required argument" in result["error"]
+    assert not any(c[0] == "type_text" for c in h._calls)
+
+
+def test_act_rejects_non_numeric_coordinate(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    h, _a = _install_fakes(monkeypatch, "ios")
+    from mobile_use.agent_loop import AgentLoop
+    loop = AgentLoop(platform="ios", session_name="arg-coord", collect=False)
+    loop.start()
+    result = loop.act("tap_at_xy", x="left", y=20)
+    assert "error" in result and "must be numeric" in result["error"]
+    assert not any(c[0] == "tap_at_xy" for c in h._calls)
+
+
+def test_act_allows_valid_arguments(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    h, _a = _install_fakes(monkeypatch, "ios")
+    from mobile_use.agent_loop import AgentLoop
+    loop = AgentLoop(platform="ios", session_name="arg-ok", collect=False)
+    loop.start()
+    result = loop.act("tap_at_xy", x=10, y=20)
+    assert result == {"result": True}
+    assert ("tap_at_xy", 10, 20) in h._calls
+
+
 def test_act_captures_helper_exception(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     h, _a = _install_fakes(monkeypatch, "ios")

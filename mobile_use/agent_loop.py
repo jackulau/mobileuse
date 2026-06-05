@@ -53,6 +53,39 @@ ACTION_VERBS = [
 ]
 
 
+def _validate_call_args(fn, kwargs):
+    """Validate ``kwargs`` against ``fn``'s signature. Returns an error string, or None.
+
+    Pre-dispatch guard so the common LLM mistakes become a clean structured error
+    instead of a daemon-side traceback that only surfaces deep in the stack:
+      * an unknown keyword (helper doesn't accept it, and has no **kwargs),
+      * a missing required argument,
+      * a non-numeric coordinate (x / y).
+    Helpers whose signature can't be introspected (C builtins) are let through.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    params = sig.parameters
+    accepts_var_kw = any(p.kind == p.VAR_KEYWORD for p in params.values())
+    named = {n: p for n, p in params.items()
+             if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and n != "self"}
+    if not accepts_var_kw:
+        unknown = [k for k in kwargs if k not in named]
+        if unknown:
+            return (f"unexpected argument(s) {sorted(unknown)} for {fn.__name__}{sig} — "
+                    f"allowed: {sorted(named)}")
+    missing = [n for n, p in named.items() if p.default is p.empty and n not in kwargs]
+    if missing:
+        return f"missing required argument(s) {missing} for {fn.__name__}{sig}"
+    for coord in ("x", "y"):
+        if coord in kwargs and not isinstance(kwargs[coord], (int, float)):
+            return (f"argument {coord!r} must be numeric, got "
+                    f"{type(kwargs[coord]).__name__}: {kwargs[coord]!r}")
+    return None
+
+
 def _parse_json_block(raw):
     """Parse a strict-JSON object from an LLM reply, tolerating ```json fences.
 
@@ -381,6 +414,13 @@ class AgentLoop:
         fn = getattr(h, action, None)
         if fn is None:
             return {"error": f"Unknown action: {action}"}
+
+        # Validate the arguments against the helper's signature BEFORE dispatch, so a
+        # malformed LLM call is a clean structured error rather than a blind fn(**kwargs)
+        # that only fails (and gets logged ambiguously) at the daemon.
+        arg_error = _validate_call_args(fn, kwargs)
+        if arg_error is not None:
+            return {"error": f"Invalid arguments for {action}: {arg_error}"}
 
         # Auto-dismiss unexpected dialogs before acting
         try:
