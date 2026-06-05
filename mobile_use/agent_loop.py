@@ -36,9 +36,9 @@ _XY_VERBS = {"tap_at_xy", "tap", "long_press", "double_tap"}
 ACTION_VERBS = [
     # touch / gestures
     "tap", "tap_safe", "tap_at_xy", "long_press", "double_tap",
-    "swipe", "scroll", "scroll_by", "swipe_back", "scroll_into_view",
+    "swipe", "scroll", "scroll_by", "swipe_back",
     # text input
-    "type_text", "set_value", "clear_text",
+    "type_text", "set_value",
     "press_enter", "press_return", "press_search", "key_event", "hide_keyboard",
     # navigation / hardware keys
     "press_home", "press_back", "press_recents", "open_app_switcher",
