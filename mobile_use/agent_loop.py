@@ -99,6 +99,13 @@ class AgentLoop:
         # samples. Lazily built on first use so __init__ stays cheap and import-safe.
         self._matcher = None
         self._matcher_loaded = False
+        # Trained YOLO detector — the PRIMARY local grounding path (single forward
+        # pass, vs the matcher's O(N-templates) scan). Off by default
+        # (MU_YOLO_DETECTOR=1 + MU_DETECTOR_WEIGHTS=<best.pt>); requires the [yolo]
+        # extra. Degrades one rung at a time: yolo -> template -> tree -> VLM, each
+        # _get_* returning None independently so a missing dep is a clean no-op.
+        self._detector = None
+        self._detector_loaded = False
 
     def _load_platform(self):
         """Lazy-load the correct platform module."""
@@ -164,6 +171,42 @@ class AgentLoop:
 
         return state
 
+    def _get_detector(self):
+        """Lazily build the trained YOLO detector (gated + import-guarded). None if off.
+
+        Primary local grounding: enabled by MU_YOLO_DETECTOR=1 with MU_DETECTOR_WEIGHTS
+        pointing at a trained best.pt. Inert (None) without the [yolo] extra or weights.
+        """
+        if self._detector_loaded:
+            return self._detector
+        self._detector_loaded = True
+        if os.environ.get("MU_YOLO_DETECTOR") != "1":
+            return None
+        try:
+            from .train_detector import YoloDetector
+            det = YoloDetector.from_env()
+            self._detector = det if (det is not None and det.available()) else None
+        except Exception:
+            self._detector = None
+        return self._detector
+
+    def _local_matches(self, shot):
+        """Best-available local grounding for a screenshot, pixel space. [] if none.
+
+        Prefers the trained YOLO detector (one forward pass); falls back to the
+        template matcher (O(N-templates) scan) only when YOLO is off or finds nothing.
+        Each rung is independently None-able so a missing optional dep is a clean no-op.
+        """
+        det = self._get_detector()
+        if det is not None:
+            ms = det.predict(shot)
+            if ms:
+                return ms
+        matcher = self._get_matcher()
+        if matcher is not None:
+            return matcher.locate_all(shot)
+        return []
+
     def _get_matcher(self):
         """Lazily build the local element matcher (gated + import-guarded). None if off."""
         if self._matcher_loaded:
@@ -187,21 +230,24 @@ class AgentLoop:
         Matcher coords are in screenshot *pixels*; set-of-marks (and taps) are in
         *logical points*, so divide by the screenshot/window scale.
         """
-        matcher = self._get_matcher()
         shot = state.get("screenshot_path")
-        if matcher is None or not shot:
+        if not shot:
             return []
         try:
             import os as _os
             if not _os.path.exists(shot):
                 return []
+            matches = self._local_matches(shot)
+            if not matches:
+                return []
             scale = self._screenshot_scale(shot, state.get("window_size"))
             marks = []
-            for i, m in enumerate(matcher.locate_all(shot)):
+            for i, m in enumerate(matches):
                 marks.append({
                     "i": i, "type": "visual", "label": m["label"],
                     "cx": m["cx"] / scale, "cy": m["cy"] / scale,
-                    "confidence": round(m["confidence"], 3), "source": "local_detector",
+                    "confidence": round(m["confidence"], 3),
+                    "source": m.get("method", "local_detector"),
                 })
             return marks
         except Exception:
