@@ -67,6 +67,26 @@ def test_parse_results_shape_and_gate():
     assert m["bbox"] == [10.0, 20.0, 100.0, 40.0]    # x,y,w,h pixel space
 
 
+class _DriftBoxes:
+    """Simulates an ultralytics API change: the .xyxy accessor no longer exists."""
+
+
+class _DriftResults:
+    def __init__(self):
+        self.boxes = _DriftBoxes()
+        self.names = {}
+
+
+def test_parse_results_warns_once_on_api_drift(capsys):
+    det = YoloDetector("x.pt")
+    td._parse_drift_warned = False                    # deterministic one-shot start
+    out1 = det._parse_results([_DriftResults()])
+    out2 = det._parse_results([_DriftResults()])
+    assert out1 == [] and out2 == []                  # drift -> empty, never a crash
+    err = capsys.readouterr().err
+    assert err.count("YOLO result parsing failed") == 1   # surfaced exactly once
+
+
 def test_min_conf_env_default(monkeypatch):
     det = YoloDetector("x.pt")
     assert det.min_confidence == td._DEFAULT_MIN_CONFIDENCE

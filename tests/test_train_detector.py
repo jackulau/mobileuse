@@ -3,9 +3,8 @@
 The conversion is exercised directly (Pillow only). ultralytics is absent in CI,
 so the training path is asserted to skip cleanly rather than raise.
 """
+import os
 from pathlib import Path
-
-import pytest
 
 import mobile_use.train_detector as td
 from mobile_use.train_detector import available, build_yolo_dataset, train
@@ -184,6 +183,18 @@ def test_train_reports_unverified_when_checkpoint_absent(tmp_path, monkeypatch):
     assert res["status"] == "trained_unverified"
     assert res["verified"] is False
     assert "reason" in res
+
+
+def test_resolve_base_model_prefers_committed_repo_copy():
+    # The repo ships yolov8n.pt at its root; a bare filename must resolve there so
+    # offline training never triggers an implicit ultralytics network download.
+    resolved = td._resolve_base_model("yolov8n.pt")
+    assert resolved.endswith("yolov8n.pt")
+    assert os.path.isabs(resolved) and os.path.exists(resolved)
+    # A path WITH a directory component is the caller's explicit choice — left untouched.
+    assert td._resolve_base_model("some/dir/custom.pt") == "some/dir/custom.pt"
+    # An unknown bare name with no repo copy is returned unchanged (let ultralytics decide).
+    assert td._resolve_base_model("definitely-not-shipped.pt") == "definitely-not-shipped.pt"
 
 
 def test_available_is_bool():

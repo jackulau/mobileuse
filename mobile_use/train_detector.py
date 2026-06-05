@@ -17,6 +17,7 @@ models sequences, not spatial layout. Two stages:
 """
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -284,10 +285,12 @@ def _resolve_base_model(model):
     if not model:
         return model
     p = Path(model)
-    if p.exists() or len(p.parts) > 1:
+    if len(p.parts) > 1:                 # explicit path with a directory component
         return str(model)
-    local = _REPO_ROOT / p.name
-    return str(local) if local.exists() else str(model)
+    local = _REPO_ROOT / p.name          # bare filename -> prefer the committed repo copy
+    if local.exists():
+        return str(local)                # absolute, CWD-independent: no implicit download
+    return str(model)                    # unknown base model -> let ultralytics resolve it
 
 
 def load_detector(weights):
@@ -300,6 +303,25 @@ def load_detector(weights):
 
 # Confidence gate shared with the template matcher (same env, same default).
 _DEFAULT_MIN_CONFIDENCE = float(os.environ.get("MU_DETECTOR_MIN_CONF", "0.78"))
+
+# One-shot guard so an ultralytics-API-drift warning is surfaced once, not per-frame.
+_parse_drift_warned = False
+
+
+def _warn_parse_drift(exc):
+    """Surface a YOLO Results-parsing failure ONCE on stderr (then stay quiet).
+
+    A silent ``except: return []`` makes an ultralytics API change look like 'the model
+    found nothing' forever. Warning once makes the drift visible without spamming the
+    per-step perception loop.
+    """
+    global _parse_drift_warned
+    if not _parse_drift_warned:
+        _parse_drift_warned = True
+        print(f"[mobile-use] YOLO result parsing failed ({type(exc).__name__}: {exc}) — "
+              "likely an ultralytics Results API change; YOLO detections are disabled "
+              "for this run. Pin a compatible 'ultralytics' or update _parse_results.",
+              file=sys.stderr)
 
 
 class YoloDetector:
@@ -339,7 +361,13 @@ class YoloDetector:
         return self._model
 
     def _parse_results(self, results):
-        """Ultralytics Results -> sorted list of canonical match dicts (pixel space)."""
+        """Ultralytics Results -> sorted list of canonical match dicts (pixel space).
+
+        The accessor chain (``boxes.xyxy/conf/cls.tolist()`` + row unpacking) is the ONE
+        place coupled to the ultralytics Results API. On an unexpected shape (e.g. a
+        major-version API change) we warn ONCE and return [] — drift is made visible,
+        never a silent permanent empty that masquerades as 'found nothing'.
+        """
         out = []
         if not results:
             return out
@@ -352,19 +380,20 @@ class YoloDetector:
             xyxy = boxes.xyxy.tolist()
             confs = boxes.conf.tolist()
             clss = boxes.cls.tolist()
-        except Exception:
-            return out
-        for (x1, y1, x2, y2), conf, cls in zip(xyxy, confs, clss):
-            if conf < self.min_confidence:
-                continue
-            idx = int(cls)
-            label = names.get(idx, str(idx)) if isinstance(names, dict) else str(idx)
-            w, h = float(x2 - x1), float(y2 - y1)
-            out.append({
-                "label": label, "confidence": float(conf),
-                "cx": float((x1 + x2) / 2.0), "cy": float((y1 + y2) / 2.0),
-                "bbox": [float(x1), float(y1), w, h], "method": "yolo",
-            })
+            for (x1, y1, x2, y2), conf, cls in zip(xyxy, confs, clss):
+                if conf < self.min_confidence:
+                    continue
+                idx = int(cls)
+                label = names.get(idx, str(idx)) if isinstance(names, dict) else str(idx)
+                w, h = float(x2 - x1), float(y2 - y1)
+                out.append({
+                    "label": label, "confidence": float(conf),
+                    "cx": float((x1 + x2) / 2.0), "cy": float((y1 + y2) / 2.0),
+                    "bbox": [float(x1), float(y1), w, h], "method": "yolo",
+                })
+        except Exception as e:
+            _warn_parse_drift(e)
+            return []
         out.sort(key=lambda d: -d["confidence"])
         return out
 
