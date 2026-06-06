@@ -38,7 +38,7 @@ If anything fails:
 mobile-use --doctor               # numbered checks with one-line remediations
 iphone-harness --reload           # nuke the daemon (rare but kills weird stale state)
 mobile-use ios sign-wda           # iOS: re-sign WebDriverAgent (the #1 setup blocker)
-mobile-use ios build-wda         ~ # iOS: build the WDA test target (first-run setup)
+mobile-use ios build-wda          # iOS: build the WDA test target (first-run setup)
 mobile-use quickstart --autostart-appium   # spawn Appium server in background
 ```
 
