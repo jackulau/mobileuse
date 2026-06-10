@@ -700,7 +700,7 @@ def scroll_by(dy=-400, x=None, y=None):
     appium("mobile: dragGesture",
            startX=x, startY=y, endX=x, endY=target_y,
            speed=2500)
-    wait(0.8)
+    _settle(0.8)
     return True
 
 
@@ -837,6 +837,27 @@ def wait(seconds=1.0):
     time.sleep(seconds)
 
 
+def _settle_scale():
+    """Gesture-settle multiplier from ANH_GESTURE_SETTLE (default 1.0 = stock).
+
+    Scales the fixed post-gesture sleeps on the act path (scroll_by,
+    auto_dismiss_dialog). 0 disables them entirely — fastest, for emulators/CI
+    where animations are off; negative/garbage values fall back to stock.
+    """
+    try:
+        v = float(os.environ.get("ANH_GESTURE_SETTLE", "1.0"))
+    except (TypeError, ValueError):
+        return 1.0
+    return v if v >= 0 else 1.0
+
+
+def _settle(seconds):
+    """Post-gesture settle sleep, scaled by ANH_GESTURE_SETTLE."""
+    s = seconds * _settle_scale()
+    if s > 0:
+        wait(s)
+
+
 def wait_for(predicate, timeout=10.0, poll=0.3):
     """Poll predicate() until truthy or timeout. Returns the value."""
     deadline = time.time() + timeout
@@ -938,12 +959,12 @@ def auto_dismiss_dialog():
     btn = _match_dialog_button(_DISMISS_LABELS)
     if btn:
         tap(btn)
-        wait(0.5)
+        _settle(0.5)
         return True
     btn = _match_dialog_button(_ACCEPT_LABELS)
     if btn:
         tap(btn)
-        wait(0.5)
+        _settle(0.5)
         return True
     return False
 

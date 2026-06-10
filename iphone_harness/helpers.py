@@ -960,7 +960,7 @@ def tap_safe(el, refind=None, max_scrolls=4):
         # Scroll screen up so the element migrates higher.
         midx = sz["width"] // 2
         swipe(midx, sz["height"] - 100, midx, sz["height"] - 250, duration=0.3)
-        wait(0.6)
+        _settle(0.6)
         cur = refind()
         if cur is None:
             raise RuntimeError("tap_safe: refind() returned None after scrolling")
@@ -1017,7 +1017,7 @@ def open_app_switcher():
     """
     sz = window_size()
     swipe(sz["width"] // 2, sz["height"] - 2, sz["width"] // 2, sz["height"] // 2, duration=0.6)
-    wait(0.6)
+    _settle(0.6)
 
 
 def press_recents():
@@ -1085,7 +1085,7 @@ def scroll_by(dy=-400, x=None, y=None, velocity=1200):
         holdDuration=0.0,
         velocity=velocity,
     )
-    wait(1.2)  # let momentum scroll settle
+    _settle(1.2)  # let momentum scroll settle
     return True
 
 
@@ -1211,6 +1211,27 @@ def unlock():
 
 def wait(seconds=1.0):
     time.sleep(seconds)
+
+
+def _settle_scale():
+    """Gesture-settle multiplier from IPH_GESTURE_SETTLE (default 1.0 = stock).
+
+    Scales the fixed post-gesture sleeps on the act path (scroll_by, tap_safe,
+    open_app_switcher). 0 disables them entirely — fastest, for emulators/CI
+    where animations are off; negative/garbage values fall back to stock.
+    """
+    try:
+        v = float(os.environ.get("IPH_GESTURE_SETTLE", "1.0"))
+    except (TypeError, ValueError):
+        return 1.0
+    return v if v >= 0 else 1.0
+
+
+def _settle(seconds):
+    """Post-gesture settle sleep, scaled by IPH_GESTURE_SETTLE."""
+    s = seconds * _settle_scale()
+    if s > 0:
+        wait(s)
 
 
 def wait_for(predicate, timeout=10.0, poll=0.3):
