@@ -27,38 +27,57 @@ def _write_user_traceback():
     sys.stderr.write("".join(traceback.format_exception(exc_type, exc, tb)))
 
 
+def _probe_ios_connected():
+    """One USB probe: any iOS device listed by idevice_id? (1.5s timeout)."""
+    try:
+        out = subprocess.check_output(
+            ["idevice_id", "-l"], timeout=1.5, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return bool(out)
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        return False
+
+
+def _probe_android_connected():
+    """One adb probe: any device in 'adb devices' output? (1.5s timeout)."""
+    try:
+        out = subprocess.check_output(
+            ["adb", "devices"], timeout=1.5, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return any("\tdevice" in line for line in out.splitlines()[1:])
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        return False
+
+
 def _detect_platform():
     """Auto-detect which platform to use based on connected devices.
 
     Returns 'ios', 'android', or None if ambiguous/none found.
+
+    The two subprocess probes (idevice_id, adb — 1.5s timeout each) run
+    CONCURRENTLY, so the no-device worst case is ~1.5s, not ~3s of serial
+    waiting before every bare `mobile-use` invocation. An explicit *_UDID env
+    skips that platform's probe entirely.
     """
-    ios_connected = False
-    android_connected = False
+    need_ios = not os.environ.get("IPH_UDID")
+    need_android = not os.environ.get("ANH_UDID")
 
-    if os.environ.get("IPH_UDID"):
-        ios_connected = True
-    else:
-        try:
-            out = subprocess.check_output(
-                ["idevice_id", "-l"], timeout=1.5, stderr=subprocess.DEVNULL
-            ).decode().strip()
-            if out:
-                ios_connected = True
-        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            pass
+    ios_connected = not need_ios          # env override = known connected
+    android_connected = not need_android
 
-    if os.environ.get("ANH_UDID"):
-        android_connected = True
-    else:
-        try:
-            out = subprocess.check_output(
-                ["adb", "devices"], timeout=1.5, stderr=subprocess.DEVNULL
-            ).decode().strip()
-            lines = [l for l in out.splitlines()[1:] if "\tdevice" in l]
-            if lines:
-                android_connected = True
-        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            pass
+    probes = {}
+    if need_ios:
+        probes["ios"] = _probe_ios_connected
+    if need_android:
+        probes["android"] = _probe_android_connected
+    if probes:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(probes)) as pool:
+            results = {k: pool.submit(fn) for k, fn in probes.items()}
+        if need_ios:
+            ios_connected = results["ios"].result()
+        if need_android:
+            android_connected = results["android"].result()
 
     if ios_connected and not android_connected:
         return "ios"

@@ -109,12 +109,14 @@ def test_android_ui_tree_compact_param():
 
 
 def test_cli_auto_detect_timeout():
-    """Verify auto-detect uses fast timeouts."""
+    """Verify auto-detect probes keep fast timeouts (goal/022 D8 moved the
+    subprocess calls into _probe_*_connected, run concurrently)."""
     import inspect
 
     from mobile_use import cli
-    src = inspect.getsource(cli._detect_platform)
-    assert "timeout=1.5" in src
+    for probe in (cli._probe_ios_connected, cli._probe_android_connected):
+        assert "timeout=1.5" in inspect.getsource(probe)
+    assert "ThreadPoolExecutor" in inspect.getsource(cli._detect_platform)
 
 
 def test_agent_helpers_lazy_flag():
