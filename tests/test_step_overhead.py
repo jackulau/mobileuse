@@ -22,8 +22,8 @@ STEPS = 3
 # Each later goal/022 deliverable tightens its line — see module docstring.
 EXPECTED = {
     "session_saves": 6,      # 2/step: current_app setter save + record_action save
-    "collector_copy2": 3,    # 1/step: screenshot copied on every perceive
-    "collector_hashes": 3,   # 1/step: full-file hash on every perceive
+    "collector_copy2": 1,    # D2: content-addressed — identical screen copied once
+    "collector_hashes": 3,   # 1/step: streaming hash decides the dedupe (kept)
     "preact_dismiss": 3,     # 1/act: auto_dismiss_dialog before every action
     "action_calls": 3,       # the actual tap per step (floor — never goes below)
     "collector_rows": 3,     # 1 JSONL row per perceive (shape-stable across D2)

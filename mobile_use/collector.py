@@ -19,6 +19,33 @@ DATA_DIR = Path(os.environ.get(
     REPO_ROOT / ".claude-workspace" / "training-data"
 )).expanduser()
 
+# Per-element fields kept by the default compact ui_tree dump (MU_COLLECT_TREE).
+_TREE_FIELDS = ("type", "label", "name", "text", "content_desc",
+                "x", "y", "w", "h", "cx", "cy",
+                "clickable", "accessible", "enabled", "focused", "visible")
+
+
+def _compact_tree(ui_tree):
+    """Shrink the per-row ui_tree dump (the per-step hot path writes this JSON).
+
+    MU_COLLECT_TREE=full keeps the raw tree; default 'compact' keeps only the
+    grounding-relevant fields per element and caps the element count at
+    MU_COLLECT_TREE_MAX (true size is always recorded as ui_tree_size).
+    """
+    if os.environ.get("MU_COLLECT_TREE", "compact") == "full":
+        return ui_tree
+    try:
+        cap = int(os.environ.get("MU_COLLECT_TREE_MAX", "150"))
+    except ValueError:
+        cap = 150
+    out = []
+    for el in ui_tree[:cap]:
+        if not isinstance(el, dict):
+            out.append(el)
+            continue
+        out.append({k: el[k] for k in _TREE_FIELDS if k in el})
+    return out
+
 
 def _valid_bbox(bbox):
     """True iff ``bbox`` is a 4-tuple of (x, y, w, h) with x,y >= 0 and w,h > 0.
@@ -77,15 +104,12 @@ class Collector:
         }
 
         if screenshot_path and os.path.exists(screenshot_path):
-            basename = f"{int(ts * 1000)}.png"
-            dest = self._screenshots_dir / basename
-            shutil.copy2(screenshot_path, dest)
-            event["screenshot"] = str(dest)
-            event["screenshot_hash"] = _file_hash(screenshot_path)
+            event["screenshot"], event["screenshot_hash"] = \
+                self._store_screenshot(screenshot_path)
 
         if ui_tree is not None:
             event["ui_tree_size"] = len(ui_tree)
-            event["ui_tree"] = ui_tree
+            event["ui_tree"] = _compact_tree(ui_tree)
 
         if active_app is not None:
             event["active_app"] = active_app
@@ -108,6 +132,22 @@ class Collector:
             f.write(json.dumps(event, default=str) + "\n")
         self._count += 1
         return event
+
+    def _store_screenshot(self, screenshot_path):
+        """Content-addressed screenshot store: hash first, copy only when new.
+
+        The hash (already needed for the row's ``screenshot_hash``) doubles as
+        the stored basename, so a repeated identical screen — the common case in
+        a multi-step run — costs one stat instead of a full PNG copy per step,
+        and the dataset never accumulates byte-identical duplicates.
+        Returns ``(stored_path_str, digest)``.
+        """
+        digest = _file_hash(screenshot_path)
+        dest = self._screenshots_dir / f"{digest[:16]}.png"
+        if not dest.exists():
+            self._screenshots_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(screenshot_path, dest)
+        return str(dest), digest
 
     def record_perception(self, state, action=None, target=None, success=True):
         """Record from a perceive() state dict (convenience wrapper)."""
@@ -162,17 +202,17 @@ class Collector:
         px_bbox = list(event["bbox_logical"])
         scale = 1.0
         if screenshot_path and os.path.exists(screenshot_path):
-            self._screenshots_dir.mkdir(exist_ok=True)
-            basename = f"det-{int(ts * 1000)}.png"
-            dest = self._screenshots_dir / basename
-            shutil.copy2(screenshot_path, dest)
-            event["screenshot"] = str(dest)
-            event["screenshot_hash"] = _file_hash(screenshot_path)
+            event["screenshot"], event["screenshot_hash"] = \
+                self._store_screenshot(screenshot_path)
             scale = _image_scale(screenshot_path, window_size)
             if scale != 1.0:
                 px_bbox = [v * scale for v in px_bbox]
             if save_crop:
-                crop = self._save_crop(screenshot_path, px_bbox)
+                # ms timestamp + per-collector ordinal: unique even for several
+                # samples recorded within the same millisecond.
+                crop = self._save_crop(
+                    screenshot_path, px_bbox,
+                    stem=f"det-{int(ts * 1000)}-{self._detection_count}")
                 if crop:
                     event["crop"] = str(crop)
         event["bbox"] = px_bbox          # pixel-space box, consistent with the image
@@ -183,8 +223,15 @@ class Collector:
         self._detection_count += 1
         return event
 
-    def _save_crop(self, src_png, bbox):
-        """Crop ``bbox`` (pixel space) out of ``src_png`` into the crops dir. None on failure."""
+    def _save_crop(self, src_png, bbox, stem=None):
+        """Crop ``bbox`` (pixel space) out of ``src_png`` into the crops dir. None on failure.
+
+        ``stem`` names the crop file uniquely per SAMPLE. The old behavior named
+        it after the source screenshot's basename — but the source is a fixed
+        device temp path (e.g. iph-shot.png), so every crop overwrote the same
+        file and earlier samples' ``crop`` rows silently pointed at the wrong
+        pixels (corrupting the template matcher's training set).
+        """
         try:
             from PIL import Image
         except Exception:
@@ -197,7 +244,8 @@ class Collector:
                 if x1 <= x0 or y1 <= y0:
                     return None
                 self._crops_dir.mkdir(exist_ok=True)
-                dest = self._crops_dir / Path(src_png).name.replace(".png", "-crop.png")
+                base = stem or Path(src_png).name.removesuffix(".png")
+                dest = self._crops_dir / f"{base}-crop.png"
                 im.crop((x0, y0, x1, y1)).save(dest)
                 return dest
         except Exception:
