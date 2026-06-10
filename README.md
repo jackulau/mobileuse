@@ -325,6 +325,31 @@ produced checkpoint actually loads and runs one inference (else `trained_unverif
 early on an empty dataset, and resolves the bare `yolov8n.pt` base model to the committed
 repo-root copy so an **offline** run never triggers an implicit download.
 
+### Steady-state speed — per-step overhead trimmed (goal/022)
+
+Beyond perception, the loop's per-step side-effect costs were profiled and cut.
+Deterministic counts (asserted in `tests/test_step_overhead.py`; wall-clock is
+reported, never asserted):
+
+| Per-step cost                        | Before | After | How |
+|--------------------------------------|--------|-------|-----|
+| Session JSON full-file writes        | 2      | 1     | unchanged `current_app` no longer rewrites the file |
+| Screenshot PNG copies (same screen)  | 1/step | 1 total | content-addressed store — hash decides, copy only when new |
+| Pre-act `auto_dismiss` device RPCs   | 1/act  | 0     | skipped when the fresh same-step snapshot showed no alert (`MU_PREACT_DISMISS`) |
+| `get_available_actions` introspection| every LLM step | once per module | `_ACTIONS_MEMO` |
+| YOLO checkpoint deserializes (startup)| 2     | 1     | verification load is kept |
+
+Also: `idevice_id` + `adb` detect probes run **concurrently** (bare `mobile-use`
+cold start worst case ~1.5s, was ~3s), `ensure_daemon` trusts a verified probe
+for `IPH_ENSURE_TTL`/`ANH_ENSURE_TTL` seconds (default 10), gesture settle
+sleeps scale via `IPH_GESTURE_SETTLE`/`ANH_GESTURE_SETTLE` (default 1.0 = stock;
+0 for emulators/CI), and the collector's per-row UI-tree dump is compact+capped
+(`MU_COLLECT_TREE=full` restores raw). Crops are now named per-sample — the old
+source-basename naming silently overwrote every crop into one file.
+
+Dev velocity: the suite is `pytest-xdist`-safe — `pip install 'mobile-use[dev]'`
+then `pytest -n auto tests -q` (~30-40s on 8 workers vs ~2-3 min serial).
+
 ### Self-check (validate the harness itself)
 
 ```bash

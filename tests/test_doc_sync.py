@@ -75,6 +75,37 @@ def test_cli_help_lists_perception_commands():
     assert "train-detector" in CLI
 
 
+# ---- goal/022: steady-state speed knobs tie docs to code -----------------------
+
+def test_env_example_documents_steady_state_vars():
+    for var in ("MU_PREACT_DISMISS", "IPH_GESTURE_SETTLE", "ANH_GESTURE_SETTLE",
+                "IPH_ENSURE_TTL", "ANH_ENSURE_TTL",
+                "MU_COLLECT_TREE", "MU_COLLECT_TREE_MAX"):
+        assert var in ENV, f".env.example missing {var}"
+
+
+def test_steady_state_vars_exist_in_code():
+    # Every documented knob must be read by shipped code (no doc-only env vars).
+    agent_loop = (ROOT / "mobile_use" / "agent_loop.py").read_text(encoding="utf-8")
+    collector = (ROOT / "mobile_use" / "collector.py").read_text(encoding="utf-8")
+    iph_h = (ROOT / "iphone_harness" / "helpers.py").read_text(encoding="utf-8")
+    anh_h = (ROOT / "android_harness" / "helpers.py").read_text(encoding="utf-8")
+    iph_a = (ROOT / "iphone_harness" / "admin.py").read_text(encoding="utf-8")
+    anh_a = (ROOT / "android_harness" / "admin.py").read_text(encoding="utf-8")
+    assert "MU_PREACT_DISMISS" in agent_loop
+    assert "MU_COLLECT_TREE" in collector and "MU_COLLECT_TREE_MAX" in collector
+    assert "IPH_GESTURE_SETTLE" in iph_h
+    assert "ANH_GESTURE_SETTLE" in anh_h
+    assert "IPH_ENSURE_TTL" in iph_a
+    assert "ANH_ENSURE_TTL" in anh_a
+
+
+def test_docs_document_fast_test_lane():
+    assert "pytest -n auto" in README
+    assert "pytest -n auto" in SETUP
+    assert "MU_PREACT_DISMISS" in README and "MU_PREACT_DISMISS" in SETUP
+
+
 def test_setup_documents_detection_layers():
     assert "MU_LOCAL_SHORTCIRCUIT" in SETUP
     assert "polars-lts-cpu" in SETUP            # the older-CPU training gotcha

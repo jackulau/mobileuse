@@ -778,6 +778,18 @@ install (and CI) is unaffected.
 
 Confidence gate for both detectors: `MU_DETECTOR_MIN_CONF` (default `0.78`).
 
+### Steady-state speed knobs (goal/022 — sane defaults, all optional)
+
+| Knob | Default | What it does |
+|------|---------|--------------|
+| `MU_PREACT_DISMISS` | `snapshot` | Pre-act dialog auto-dismiss gating: `snapshot` skips the per-action device round-trip when the fresh same-step snapshot showed no alert; `always` = pre-022 behavior; `off` = never pre-dismiss. |
+| `IPH_GESTURE_SETTLE` / `ANH_GESTURE_SETTLE` | `1.0` | Multiplier on the fixed post-gesture sleeps (scroll/tap_safe/dismiss). `0` disables them — for emulators/CI with animations off. |
+| `IPH_ENSURE_TTL` / `ANH_ENSURE_TTL` | `10` | Seconds a verified `ensure_daemon` deep probe is trusted; within the window only the cheap local liveness ping runs. `0` = probe every call. |
+| `MU_COLLECT_TREE` / `MU_COLLECT_TREE_MAX` | `compact` / `150` | Per-row training-data UI-tree dump: compact keeps grounding-relevant fields, capped; `full` = raw uncapped tree. |
+
+Fast local test lane: `pip install 'mobile-use[dev]'` then `pytest -n auto tests -q`
+(the suite is xdist-safe; ~30-40s on 8 workers vs ~2-3 min serial).
+
 > **Safety:** `MU_LOCAL_SHORTCIRCUIT` is the one risky knob — a wrong match
 > becomes a real tap with no VLM in the loop. It fires only on a *single*,
 > confidence-gated detection whose label is named by the task, and it is OFF
