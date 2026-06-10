@@ -127,9 +127,17 @@ def test_run_on_linux_unknown_distro_shows_all_manager_hints(monkeypatch, capsys
     monkeypatch.setattr(bootstrap, "_have", lambda c: False)
     monkeypatch.setattr(bootstrap, "_appium_driver_installed", lambda n: False)
     monkeypatch.setattr(bootstrap, "_python_pkg_importable", lambda: False)
+    # dry_run=False: run() EXECUTES remediation commands for steps that still
+    # have a cmd (npm/pip). Unstubbed, this test really ran `npm i -g appium`
+    # on the host — mutating global state mid-suite (caught by the goal/022
+    # audit when the dry-run determinism test flipped under xdist).
+    executed = []
+    monkeypatch.setattr(bootstrap.subprocess, "check_call",
+                        lambda cmd, *a, **kw: executed.append(cmd) or 0)
 
     bootstrap.run(ios=False, android=True, dry_run=False)
     out = capsys.readouterr().out
+    assert all(isinstance(c, list) for c in executed)   # commands captured, not run
     # adb MISSING line should list all known package managers
     assert "android-tools-adb" in out or "android-tools" in out
     assert "apt install" in out
@@ -148,6 +156,9 @@ def test_run_summary_references_linux_setup_section_on_failure(monkeypatch, caps
     monkeypatch.setattr(bootstrap, "_appium_driver_installed", lambda n: False)
     monkeypatch.setattr(bootstrap, "_python_pkg_importable", lambda: False)
     monkeypatch.setattr(bootstrap, "_linux_pkg_manager", lambda: None)
+    # Never execute real remediation commands (see unknown-distro test above).
+    monkeypatch.setattr(bootstrap.subprocess, "check_call",
+                        lambda cmd, *a, **kw: 0)
 
     rc = bootstrap.run(ios=False, android=True, dry_run=False)
     out = capsys.readouterr().out

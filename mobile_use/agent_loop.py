@@ -61,6 +61,14 @@ ACTION_VERBS = [
 _ACTIONS_MEMO = weakref.WeakKeyDictionary()
 
 
+def _copy_actions(actions):
+    """Two-level copy of an action schema — the values are flat str dicts, so
+    this fully isolates callers from the memo (a shallow dict() would share the
+    nested per-verb dicts: mutating result['tap']['doc'] would poison every
+    later LLM prompt built from the memo)."""
+    return {verb: dict(meta) for verb, meta in actions.items()}
+
+
 def _validate_call_args(fn, kwargs):
     """Validate ``kwargs`` against ``fn``'s signature. Returns an error string, or None.
 
@@ -554,7 +562,7 @@ class AgentLoop:
         except TypeError:        # un-weakref-able stand-in — introspect fresh
             cached = None
         if cached is not None:
-            return dict(cached)
+            return _copy_actions(cached)
         actions = {}
         for verb in ACTION_VERBS:
             fn = getattr(h, verb, None)
@@ -570,7 +578,7 @@ class AgentLoop:
             _ACTIONS_MEMO[h] = actions
         except TypeError:
             pass
-        return dict(actions)
+        return _copy_actions(actions)
 
     def write_discovery(self, app_id, title, selectors=None, steps=None, gotchas=None):
         """Auto-write a domain skill when the agent discovers something non-obvious."""

@@ -658,7 +658,7 @@ def tap_safe(el, refind=None, max_scrolls=4):
             break
         midx = sz["width"] // 2
         swipe(midx, sz["height"] - 100, midx, sz["height"] - 250, duration=0.3)
-        wait(0.6)
+        _settle(0.6)
         cur = refind()
         if cur is None:
             raise RuntimeError("tap_safe: refind() returned None after scrolling")

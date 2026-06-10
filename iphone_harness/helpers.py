@@ -1330,19 +1330,19 @@ def auto_dismiss_dialog():
     for btn in buttons:
         if btn in dismiss_labels:
             _tap_alert_button(btn)
-            wait(0.5)
+            _settle(0.5)
             return True
     # A single-button alert is informational — tapping it just dismisses.
     if len(buttons) == 1:
         _tap_alert_button(buttons[0])
-        wait(0.5)
+        _settle(0.5)
         return True
     # Multiple buttons, none a known dismiss: tap the first NON-grant button
     # (the implicit deny). If every button is a grant, do not silently accept.
     non_grant = [b for b in buttons if b not in grant_labels]
     if non_grant:
         _tap_alert_button(non_grant[0])
-        wait(0.5)
+        _settle(0.5)
         return True
     return False
 

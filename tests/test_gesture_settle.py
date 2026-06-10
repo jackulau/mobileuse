@@ -76,3 +76,31 @@ def test_default_scale_keeps_stock_durations(monkeypatch):
     monkeypatch.delenv("ANH_GESTURE_SETTLE", raising=False)
     ah.scroll_by(dy=-100)
     assert slept == [pytest.approx(0.8)]
+
+
+def test_android_tap_safe_scroll_settles_scaled(monkeypatch):
+    """Audit-found gap: Android tap_safe's per-iteration 0.6s was left unscaled."""
+    slept = []
+    monkeypatch.setattr(ah, "wait", lambda s=1.0: slept.append(s))
+    monkeypatch.setattr(ah, "window_size", lambda: {"width": 400, "height": 800})
+    monkeypatch.setattr(ah, "swipe", lambda *a, **kw: True)
+    taps = []
+    monkeypatch.setattr(ah, "tap_at_xy", lambda x, y: taps.append((x, y)))
+    monkeypatch.setenv("ANH_GESTURE_SETTLE", "0.5")
+
+    low = {"cx": 200, "cy": 790, "y": 780, "h": 40}      # inside the nav danger zone
+    safe = {"cx": 200, "cy": 400, "y": 380, "h": 40}
+    ah.tap_safe(low, refind=lambda: safe)
+    assert slept == [pytest.approx(0.3)]                 # 0.6 * 0.5
+    assert taps == [(200, 400)]
+
+
+def test_ios_auto_dismiss_settles_scaled(monkeypatch):
+    """iOS auto_dismiss_dialog's post-tap 0.5s settle scales like Android's."""
+    slept = []
+    monkeypatch.setattr(ih, "wait", lambda s=1.0: slept.append(s))
+    monkeypatch.setattr(ih, "alert", lambda: {"buttons": ["Cancel", "Allow"]})
+    monkeypatch.setattr(ih, "_tap_alert_button", lambda label: True)
+    monkeypatch.setenv("IPH_GESTURE_SETTLE", "0.2")
+    assert ih.auto_dismiss_dialog() is True
+    assert slept == [pytest.approx(0.1)]                 # 0.5 * 0.2

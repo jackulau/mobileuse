@@ -80,7 +80,21 @@ def test_memo_result_is_mutation_safe(monkeypatch, tmp_path):
     first = loop.get_available_actions()
     first.pop("tap")
     assert "tap" in loop.get_available_actions(), \
-        "caller mutation must not poison the memo"
+        "top-level caller mutation must not poison the memo"
+
+
+def test_memo_result_nested_mutation_safe(monkeypatch, tmp_path):
+    """Audit-found gap: a shallow copy shared the per-verb dicts, so mutating
+    result['tap']['doc'] poisoned every later LLM prompt built from the memo."""
+    h = _helpers_module(["tap"])
+    loop = _loop(monkeypatch, tmp_path, h)
+    first = loop.get_available_actions()
+    first["tap"]["doc"] = "POISONED"
+    first["tap"]["signature"] = "POISONED"
+    second = loop.get_available_actions()
+    assert second["tap"]["doc"] == "One-line doc.", \
+        "nested caller mutation must not poison the memo"
+    assert second["tap"]["signature"] != "POISONED"
 
 
 def test_schema_content_unchanged_by_memo(monkeypatch, tmp_path):
