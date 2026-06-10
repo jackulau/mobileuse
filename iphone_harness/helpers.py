@@ -156,6 +156,13 @@ def _check_send_result(r, req, timeout, _retries):
         err = r["error"]
         if "stale" in err.lower() or "session" in err.lower():
             _drop_conn()
+            # The session is known-bad: invalidate the ensure freshness memo so
+            # the next ensure_daemon runs its full deep probe (-> restart).
+            try:
+                from .admin import ensure_cache_bust
+                ensure_cache_bust(_active_name())
+            except Exception:
+                pass
             if _retries > 0:
                 time.sleep(RETRY_DELAY * (2 ** (MAX_RETRIES - _retries)))
                 return _send(req, timeout=timeout, _retries=_retries - 1)

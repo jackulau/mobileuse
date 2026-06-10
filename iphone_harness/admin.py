@@ -124,6 +124,30 @@ def cleanup_stale(name=None):
     return cleaned
 
 
+# Freshness window for the deep (device round-trip) ensure probe. A verified
+# ensure within the TTL is trusted, mirroring the daemon's own PROBE_INTERVAL
+# pattern — without this, EVERY ensure_daemon call cost an activeAppInfo RPC
+# even when the daemon was verified moments ago.
+_ENSURE_TTL_DEFAULT = 10.0
+_ensure_ok_at = {}        # name -> time.monotonic() of last VERIFIED deep probe
+
+
+def _ensure_ttl():
+    try:
+        return float(os.environ.get("IPH_ENSURE_TTL", str(_ENSURE_TTL_DEFAULT)))
+    except (TypeError, ValueError):
+        return _ENSURE_TTL_DEFAULT
+
+
+def ensure_cache_bust(name=None):
+    """Forget the last verified ensure (one name, or all) so the next
+    ensure_daemon runs the full deep probe. Called on stale-session signals."""
+    if name is None:
+        _ensure_ok_at.clear()
+    else:
+        _ensure_ok_at.pop(name, None)
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     """Spawn the daemon if no live one is reachable. Idempotent.
 
@@ -149,6 +173,13 @@ def ensure_daemon(wait=30.0, name=None, env=None):
         )
 
     if daemon_alive(name):
+        # A verified deep probe within the TTL is trusted — the local liveness
+        # ping above still ran (so a dead daemon always falls through to spawn),
+        # only the device round-trip is skipped.
+        last = _ensure_ok_at.get(name)
+        ttl = _ensure_ttl()
+        if last is not None and ttl > 0 and (time.monotonic() - last) < ttl:
+            return
         # Live ping is enough — but verify the Appium-side handshake too. A
         # daemon whose webdriver session died still answers meta:* but errors
         # on real method calls. Probe with `mobile: activeAppInfo` (cheap, real call).
@@ -159,10 +190,14 @@ def ensure_daemon(wait=30.0, name=None, env=None):
                 "params": {"script": "mobile: activeAppInfo", "args": {}},
             })
             if isinstance(resp, dict) and "result" in resp:
+                _ensure_ok_at[name] = time.monotonic()
                 return
         except Exception:
             pass
+        ensure_cache_bust(name)
         restart_daemon(name)
+    else:
+        ensure_cache_bust(name)
 
     # Stale .sock or .pid from a hard-killed previous daemon would confuse spawn.
     cleanup_stale(name)
