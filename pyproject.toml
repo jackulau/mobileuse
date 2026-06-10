@@ -40,6 +40,11 @@ yolo = [
     "opencv-python>=4.8",
     "numpy>=1.24",
 ]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3.5",    # fast local lane: pytest -n auto tests -q
+    "ruff>=0.4",
+]
 
 [project.urls]
 Homepage = "https://github.com/jackulau/mobile_use"

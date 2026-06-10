@@ -31,6 +31,24 @@ def _wait_alive(ipc_mod, name, timeout=5.0):
     return False
 
 
+def _wait_first_frame(url, timeout=5.0):
+    """Bounded condition poll: block until the frame loop has produced a frame
+    (healthz frame_no >= 1), replacing the old blind 0.3s sleeps. Returns the
+    healthz payload. Asserts (never hangs) at the deadline."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url + "healthz", timeout=2.0) as r:
+                last = json.loads(r.read())
+                if last.get("frame_no", 0) >= 1:
+                    return last
+        except Exception:
+            pass
+        time.sleep(0.02)
+    raise AssertionError(f"viewer produced no frame within {timeout}s: {last}")
+
+
 def _spawn_mock(platform, name):
     if platform == "iphone":
         module = "tests._mock_iphone_daemon"
@@ -152,18 +170,14 @@ def test_viewer_mjpeg_index_served(iph_viewer):
 
 
 def test_viewer_mjpeg_healthz(iph_viewer):
-    # Give the frame loop a moment to produce its first frame.
-    time.sleep(0.3)
-    with urllib.request.urlopen(iph_viewer.url + "healthz", timeout=2.0) as r:
-        assert r.status == 200
-        data = json.loads(r.read())
-        assert data["platform"] == "ios"
-        assert "frame_no" in data
-        assert "fps" in data
+    data = _wait_first_frame(iph_viewer.url)
+    assert data["platform"] == "ios"
+    assert "frame_no" in data
+    assert "fps" in data
 
 
 def test_viewer_mjpeg_still_returns_jpeg(iph_viewer):
-    time.sleep(0.3)
+    _wait_first_frame(iph_viewer.url)
     with urllib.request.urlopen(iph_viewer.url + "still", timeout=2.0) as r:
         assert r.status == 200
         assert r.headers.get_content_type() == "image/jpeg"
@@ -172,7 +186,7 @@ def test_viewer_mjpeg_still_returns_jpeg(iph_viewer):
 
 
 def test_viewer_mjpeg_stream_multipart(iph_viewer):
-    time.sleep(0.3)
+    _wait_first_frame(iph_viewer.url)
     with urllib.request.urlopen(iph_viewer.url + "stream", timeout=3.0) as r:
         assert r.status == 200
         ctype = r.headers["Content-Type"]
@@ -194,15 +208,12 @@ def test_viewer_mjpeg_404_for_unknown_route(iph_viewer):
 # ---- Android parity ------------------------------------------------------
 
 def test_viewer_mjpeg_healthz_android(anh_viewer):
-    time.sleep(0.3)
-    with urllib.request.urlopen(anh_viewer.url + "healthz", timeout=2.0) as r:
-        assert r.status == 200
-        data = json.loads(r.read())
-        assert data["platform"] == "android"
+    data = _wait_first_frame(anh_viewer.url)
+    assert data["platform"] == "android"
 
 
 def test_viewer_mjpeg_still_android(anh_viewer):
-    time.sleep(0.3)
+    _wait_first_frame(anh_viewer.url)
     with urllib.request.urlopen(anh_viewer.url + "still", timeout=2.0) as r:
         assert r.status == 200
         assert r.headers.get_content_type() == "image/jpeg"

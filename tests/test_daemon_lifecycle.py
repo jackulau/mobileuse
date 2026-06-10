@@ -299,11 +299,16 @@ def test_double_spawn_race_only_one_survives(iph_name):
     pid1 = iph_ipc.identify(iph_name, timeout=1.0)
 
     p2 = _spawn_mock("iphone", iph_name)
-    # Give p2 a moment to bind (it should unlink p1's socket via serve())
-    time.sleep(1.0)
-
-    # At least one daemon should be reachable
-    final_pid = iph_ipc.identify(iph_name, timeout=1.0)
+    # Bounded condition poll (not a blind 1s sleep): wait until p2 wins the
+    # bind (it unlinks p1's socket via serve()); at the deadline fall back to
+    # the original weaker "at least one reachable" assertion.
+    deadline = time.time() + 5.0
+    final_pid = None
+    while time.time() < deadline:
+        final_pid = iph_ipc.identify(iph_name, timeout=1.0)
+        if final_pid == p2.pid:
+            break
+        time.sleep(0.05)
     assert final_pid is not None
 
     # Cleanup both

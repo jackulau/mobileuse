@@ -122,7 +122,10 @@ def test_bootstrap_ios_android_mutex():
 # ---- doctor exit codes ----------------------------------------------------
 
 def test_doctor_runs_to_completion():
-    rc, out, _ = _run_cli("--doctor")
+    # Generous timeout: doctor runs many probe subprocesses, and on a machine
+    # saturated by parallel test workers (pytest -n auto) the default 20s
+    # wall-clock bound flakes. The assertion is COMPLETION, not speed.
+    rc, out, _ = _run_cli("--doctor", timeout=90)
     # Without a device, doctor returns 1; with one, 0. Both must run to end.
     assert rc in (0, 1)
     assert "iphone-harness" in out or "iOS" in out

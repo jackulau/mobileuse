@@ -58,5 +58,7 @@ def test_annotated_output_written_and_correct(monkeypatch, tmp_path, mod, label_
     with PIL_Image.open(annotated) as im:
         assert im.size == (100, 200)
         # Red annotation boxes actually drawn (pure-black base gains red pixels).
-        reds = sum(1 for px in im.getdata() if px[0] > 200 and px[1] < 100)
+        raw = im.convert("RGB").tobytes()
+        reds = sum(1 for i in range(0, len(raw), 3)
+                   if raw[i] > 200 and raw[i + 1] < 100)
         assert reds > 0
