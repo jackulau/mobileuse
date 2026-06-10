@@ -171,3 +171,100 @@ def test_total_doctor_checks_at_least_14():
     ios_n = len(re.findall(r"^\[\d+/\d+\]", ios_out, flags=re.MULTILINE))
     anh_n = len(re.findall(r"^\[\d+/\d+\]", anh_out, flags=re.MULTILINE))
     assert ios_n + anh_n >= 14, f"only {ios_n} iOS + {anh_n} Android checks"
+
+
+# ---- doctor reads .env (the env-file check and the device check must agree) --
+#
+# Old behavior: `.env with IPH_UDID` passed while `iPhone paired` said
+# "IPH_UDID not set" — doctor contradicted itself because env-reading checks
+# never sourced the .env the daemon loads.
+
+import os
+
+
+def test_ios_doctor_env_loader_reads_env_file(monkeypatch, tmp_path):
+    from iphone_harness import admin, daemon
+    envf = tmp_path / ".env"
+    envf.write_text("IPH_UDID=DOCTOR-ENV-TEST\n", encoding="utf-8")
+    monkeypatch.delenv("IPH_UDID", raising=False)
+    monkeypatch.delenv("MOBILE_USE_NO_REPO_ENV", raising=False)
+    monkeypatch.setattr(daemon, "_env_candidates", lambda: (envf,))
+    admin._load_env_for_doctor()
+    assert os.environ.get("IPH_UDID") == "DOCTOR-ENV-TEST"
+
+
+def test_android_doctor_env_loader_reads_env_file(monkeypatch, tmp_path):
+    from android_harness import admin, daemon
+    envf = tmp_path / ".env"
+    envf.write_text("ANH_UDID=DOCTOR-ENV-TEST\n", encoding="utf-8")
+    monkeypatch.delenv("ANH_UDID", raising=False)
+    monkeypatch.delenv("MOBILE_USE_NO_REPO_ENV", raising=False)
+    monkeypatch.setattr(daemon, "_env_candidates", lambda: (envf,))
+    admin._load_env_for_doctor()
+    assert os.environ.get("ANH_UDID") == "DOCTOR-ENV-TEST"
+
+
+def test_doctor_env_loader_never_overrides_real_env(monkeypatch, tmp_path):
+    from iphone_harness import admin, daemon
+    envf = tmp_path / ".env"
+    envf.write_text("IPH_UDID=FROM-FILE\n", encoding="utf-8")
+    monkeypatch.setenv("IPH_UDID", "FROM-ENV")
+    monkeypatch.delenv("MOBILE_USE_NO_REPO_ENV", raising=False)
+    monkeypatch.setattr(daemon, "_env_candidates", lambda: (envf,))
+    admin._load_env_for_doctor()
+    assert os.environ.get("IPH_UDID") == "FROM-ENV"
+
+
+def test_doctor_env_loader_respects_no_repo_env(monkeypatch, tmp_path):
+    from iphone_harness import admin, daemon
+    envf = tmp_path / ".env"
+    envf.write_text("IPH_UDID=SHOULD-NOT-LOAD\n", encoding="utf-8")
+    monkeypatch.delenv("IPH_UDID", raising=False)
+    monkeypatch.setenv("MOBILE_USE_NO_REPO_ENV", "1")
+    monkeypatch.setattr(daemon, "_env_candidates", lambda: (envf,))
+    admin._load_env_for_doctor()
+    assert os.environ.get("IPH_UDID") is None
+
+
+# ---- CLI-on-PATH remediation tells the truth ---------------------------------
+#
+# Old behavior: suggested `pip install -e .` even when the script was already
+# installed and the actual problem was the scripts dir missing from PATH
+# (framework Python's bin dir, e.g. /Library/Frameworks/.../3.X/bin).
+
+
+def test_ios_cli_path_fix_detects_path_problem(monkeypatch, tmp_path):
+    from iphone_harness import admin
+    (tmp_path / "iphone-harness").touch()
+    monkeypatch.setattr("sysconfig.get_path", lambda key: str(tmp_path))
+    fix = admin._cli_path_fix("iphone-harness", "python3 -m iphone_harness.run")
+    assert "not on PATH" in fix
+    assert str(tmp_path) in fix
+    assert "pip install" not in fix
+
+
+def test_ios_cli_path_fix_not_installed_suggests_pip(monkeypatch, tmp_path):
+    from iphone_harness import admin
+    monkeypatch.setattr("sysconfig.get_path", lambda key: str(tmp_path))
+    fix = admin._cli_path_fix("iphone-harness", "python3 -m iphone_harness.run")
+    assert "pip install -e ." in fix
+    assert "python3 -m iphone_harness.run" in fix
+
+
+def test_android_cli_path_fix_detects_path_problem(monkeypatch, tmp_path):
+    from android_harness import admin
+    (tmp_path / "android-harness").touch()
+    monkeypatch.setattr("sysconfig.get_path", lambda key: str(tmp_path))
+    fix = admin._cli_path_fix("android-harness", "python3 -m android_harness.run")
+    assert "not on PATH" in fix
+    assert str(tmp_path) in fix
+    assert "pip install" not in fix
+
+
+def test_android_cli_path_fix_windows_exe_detected(monkeypatch, tmp_path):
+    from android_harness import admin
+    (tmp_path / "android-harness.exe").touch()
+    monkeypatch.setattr("sysconfig.get_path", lambda key: str(tmp_path))
+    fix = admin._cli_path_fix("android-harness", "python3 -m android_harness.run")
+    assert "not on PATH" in fix
+    assert "pip install" not in fix

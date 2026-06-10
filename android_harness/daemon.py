@@ -18,10 +18,14 @@ from pathlib import Path
 from . import _ipc as ipc
 
 
-def _load_env():
+def _env_candidates():
     repo_root = Path(__file__).resolve().parents[1]
     workspace = Path(os.environ.get("ANH_AGENT_WORKSPACE", repo_root / "agent-workspace")).expanduser()
-    for p in (repo_root / ".env", workspace / ".env"):
+    return (repo_root / ".env", workspace / ".env")
+
+
+def _load_env(paths=None):
+    for p in _env_candidates() if paths is None else paths:
         if not p.exists():
             continue
         _load_env_file(p)

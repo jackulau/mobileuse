@@ -378,6 +378,35 @@ def _check_cli_on_path(name):
     return True, p
 
 
+def _cli_path_fix(cli_name, module_fallback):
+    """Remediation for '<cli> not on PATH' that doesn't suggest reinstalling
+    when the script is already installed: framework/user pip installs drop
+    console scripts in a bin dir login shells often lack."""
+    import sysconfig
+    try:
+        scripts = Path(sysconfig.get_path("scripts"))
+        installed = (scripts / cli_name).exists() or (scripts / (cli_name + ".exe")).exists()
+    except Exception:
+        installed = False  # sysconfig scheme quirks must never break doctor
+    if installed:
+        return (f'installed at {scripts} which is not on PATH — add it: '
+                f'export PATH="{scripts}:$PATH"  (or run `{module_fallback}`)')
+    return f"pip install -e .  (puts CLI on PATH). Otherwise run `{module_fallback}`"
+
+
+def _load_env_for_doctor():
+    """Doctor sees the same .env the daemon loads (real env vars still win),
+    so a filled .env can't pass the file check yet fail the device check.
+    Strict sandboxes opt out with MOBILE_USE_NO_REPO_ENV=1."""
+    if os.environ.get("MOBILE_USE_NO_REPO_ENV") == "1":
+        return
+    try:
+        from .daemon import _load_env
+        _load_env()
+    except Exception:
+        pass
+
+
 def _check_python_pkg():
     try:
         subprocess.check_output([sys.executable, "-c", "import android_harness, mobile_use"],
@@ -443,6 +472,7 @@ def _check_android_wifi_reachable(serial):
 
 
 def run_doctor():
+    _load_env_for_doctor()
     print(f"android-harness {_version() or '(dev)'}\n")
     # Advisory version summary (support matrix + detected toolchain). Informational
     # only — out-of-range tooling warns here but never flips the doctor exit code.
@@ -468,7 +498,7 @@ def run_doctor():
         ("Python package installed (pip install -e .)", _check_python_pkg, (),
          "Run from repo root: pip install -e .  (or `mobile-use bootstrap`)"),
         ("`android-harness` CLI on PATH", _check_cli_on_path, ("android-harness",),
-         "pip install -e .  (puts CLI on PATH). Otherwise run `python3 -m android_harness.run`"),
+         _cli_path_fix("android-harness", "python3 -m android_harness.run")),
         (".env with ANH_UDID", _check_env_file, (),
          "Copy .env.example to .env and fill in.  Or: `mobile-use init`"),
         ("Appium server reachable", _check_appium, (),
