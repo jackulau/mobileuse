@@ -139,6 +139,11 @@ class AgentLoop:
         # _get_* returning None independently so a missing dep is a clean no-op.
         self._detector = None
         self._detector_loaded = False
+        # Pre-act dismiss gating (MU_PREACT_DISMISS): the freshest perceive()'s
+        # alert state + when it was taken, so act() can skip the auto-dismiss
+        # device round-trip when the same-step snapshot already showed no alert.
+        self._last_alert = None
+        self._last_perceive_t = None
 
     def _load_platform(self):
         """Lazy-load the correct platform module."""
@@ -187,6 +192,9 @@ class AgentLoop:
                 state = None
         if state is None:
             state = self._perceive_per_call(h)
+
+        self._last_alert = state.get("alert")
+        self._last_perceive_t = time.monotonic()
 
         if state.get("active_app") is not None:
             self.session.current_app = state["active_app"]
@@ -427,11 +435,14 @@ class AgentLoop:
         if arg_error is not None:
             return {"error": f"Invalid arguments for {action}: {arg_error}"}
 
-        # Auto-dismiss unexpected dialogs before acting
-        try:
-            h.auto_dismiss_dialog()
-        except Exception:
-            pass
+        # Auto-dismiss unexpected dialogs before acting — gated: when the fresh
+        # same-step snapshot already showed no alert, this device round-trip is
+        # pure overhead and is skipped (MU_PREACT_DISMISS=always restores it).
+        if self._should_preact_dismiss():
+            try:
+                h.auto_dismiss_dialog()
+            except Exception:
+                pass
 
         try:
             result = fn(**kwargs)
@@ -465,6 +476,32 @@ class AgentLoop:
         if verified is not None:
             out["verified"] = bool(verified)
         return out
+
+    # How long a clean snapshot is trusted to mean "no dialog is up". Past this,
+    # the pre-act dismiss runs again — stale knowledge fails safe.
+    _PREACT_SNAPSHOT_MAX_AGE_S = 60.0
+
+    def _should_preact_dismiss(self):
+        """Whether act() should spend a device round-trip on auto_dismiss_dialog.
+
+        MU_PREACT_DISMISS:
+          snapshot (default) — skip only when a FRESH perceive() from this loop
+                               showed no alert; no/stale perception -> dismiss.
+          always             — pre-022 behavior: dismiss before every action.
+          off                — never pre-dismiss (fastest; the LLM still has
+                               alert_accept/alert_dismiss/auto_dismiss_dialog
+                               as explicit actions).
+        """
+        mode = os.environ.get("MU_PREACT_DISMISS", "snapshot")
+        if mode == "off":
+            return False
+        if mode == "always":
+            return True
+        if self._last_perceive_t is None:
+            return True
+        if (time.monotonic() - self._last_perceive_t) > self._PREACT_SNAPSHOT_MAX_AGE_S:
+            return True
+        return bool(self._last_alert)
 
     def _verify(self, expect):
         """Re-perceive and evaluate the expect predicate. False on any error."""

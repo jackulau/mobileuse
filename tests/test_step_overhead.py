@@ -24,7 +24,7 @@ EXPECTED = {
     "session_saves": 4,      # D3: step0 app-change save + 1 record_action/step
     "collector_copy2": 1,    # D2: content-addressed — identical screen copied once
     "collector_hashes": 3,   # 1/step: streaming hash decides the dedupe (kept)
-    "preact_dismiss": 3,     # 1/act: auto_dismiss_dialog before every action
+    "preact_dismiss": 0,     # D4: clean same-step snapshot -> round-trip skipped
     "action_calls": 3,       # the actual tap per step (floor — never goes below)
     "collector_rows": 3,     # 1 JSONL row per perceive (shape-stable across D2)
 }
