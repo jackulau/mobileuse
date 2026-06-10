@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+import weakref
 
 from .collector import Collector
 from .perception_cache import PerceptionCache, screen_signature
@@ -51,6 +52,13 @@ ACTION_VERBS = [
     "alert_accept", "alert_dismiss", "auto_dismiss_dialog",
     "wait", "wait_for_element", "wait_for_app",
 ]
+
+
+# Memoized action schemas, keyed by the helpers MODULE OBJECT (weakly, so
+# test-injected fake modules are dropped on GC). The schema is pure introspection
+# over a module whose functions never change at runtime — re-running
+# inspect.signature + getdoc over ~40 verbs on every LLM step was pure waste.
+_ACTIONS_MEMO = weakref.WeakKeyDictionary()
 
 
 def _validate_call_args(fn, kwargs):
@@ -541,6 +549,12 @@ class AgentLoop:
         """
         self._load_platform()
         h = self._helpers
+        try:
+            cached = _ACTIONS_MEMO.get(h)
+        except TypeError:        # un-weakref-able stand-in — introspect fresh
+            cached = None
+        if cached is not None:
+            return dict(cached)
         actions = {}
         for verb in ACTION_VERBS:
             fn = getattr(h, verb, None)
@@ -552,7 +566,11 @@ class AgentLoop:
                 sig = "(...)"
             doc = (inspect.getdoc(fn) or "").strip().splitlines()
             actions[verb] = {"signature": sig, "doc": doc[0] if doc else ""}
-        return actions
+        try:
+            _ACTIONS_MEMO[h] = actions
+        except TypeError:
+            pass
+        return dict(actions)
 
     def write_discovery(self, app_id, title, selectors=None, steps=None, gotchas=None):
         """Auto-write a domain skill when the agent discovers something non-obvious."""
