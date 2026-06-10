@@ -21,7 +21,7 @@ STEPS = 3
 # Expected side-effect counts for one 3-step run() (exact, deterministic).
 # Each later goal/022 deliverable tightens its line — see module docstring.
 EXPECTED = {
-    "session_saves": 6,      # 2/step: current_app setter save + record_action save
+    "session_saves": 4,      # D3: step0 app-change save + 1 record_action/step
     "collector_copy2": 1,    # D2: content-addressed — identical screen copied once
     "collector_hashes": 3,   # 1/step: streaming hash decides the dedupe (kept)
     "preact_dismiss": 3,     # 1/act: auto_dismiss_dialog before every action

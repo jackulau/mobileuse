@@ -54,6 +54,10 @@ class Session:
 
     @current_app.setter
     def current_app(self, app_info):
+        # Skip the full-file rewrite when nothing changed — perceive() sets this
+        # every step, and the foreground app rarely changes between steps.
+        if app_info == self._state.get("current_app"):
+            return
         self._state["current_app"] = app_info
         self.save()
 
