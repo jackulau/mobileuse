@@ -584,14 +584,17 @@ def annotated_screenshot(path=None, run_ocr=True):
         raise RuntimeError("annotated_screenshot() needs Pillow. Install: pip install pillow") from e
 
     base = screenshot(path)
+    # Decode the PNG ONCE — this image is reused for both the scale math and
+    # the drawing (it used to be re-opened up to 3x per call).
+    img = Image.open(base).convert("RGB")
     if run_ocr:
         items, (w_px, h_px) = ocr(base)
         boxes = [(it["box"], it.get("text", "")) for it in items]
         result = items
     else:
         sz = window_size()
-        sx = Image.open(base).size[0] / sz["width"]
-        sy = Image.open(base).size[1] / sz["height"]
+        sx = img.size[0] / sz["width"]
+        sy = img.size[1] / sz["height"]
         items = ui_tree(visible_only=True)
         boxes = [
             ([el["x"] * sx, el["y"] * sy, el["w"] * sx, el["h"] * sy], el.get("label") or el.get("name") or el["type"])
@@ -599,7 +602,6 @@ def annotated_screenshot(path=None, run_ocr=True):
         ]
         result = items
 
-    img = Image.open(base).convert("RGB")
     draw = ImageDraw.Draw(img, "RGBA")
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 18)
