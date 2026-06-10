@@ -91,6 +91,13 @@ def _have_xcode():
 
 
 def _brew_has(pkg):
+    # Test seam mirroring MOBILE_USE_FAKE_APPIUM_DRIVERS: the live `brew list`
+    # probe (4s timeout, except -> False) can time out under heavy concurrent
+    # load, flipping the dry-run plan and flaking determinism tests.
+    # MOBILE_USE_FAKE_BREW_PKGS = comma-list of installed pkgs ("" = none).
+    fake = os.environ.get("MOBILE_USE_FAKE_BREW_PKGS")
+    if fake is not None:
+        return pkg in [p for p in fake.split(",") if p]
     if not is_macos() or not _have("brew"):
         return False
     try:

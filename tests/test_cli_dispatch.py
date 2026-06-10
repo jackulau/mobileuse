@@ -93,11 +93,12 @@ def test_exec_syntax_error_clean_message():
 # ---- bootstrap idempotency ------------------------------------------------
 
 def test_bootstrap_dry_run_twice_produces_same_plan():
-    # Pin the live appium-driver probe so the plan is deterministic run-to-run.
-    # The real `appium driver list` is slow (10s timeout) and can intermittently
-    # time out under heavy concurrent load, flipping the plan and flaking this
-    # test. See bootstrap._appium_driver_installed (MOBILE_USE_FAKE_APPIUM_DRIVERS).
-    env = {"MOBILE_USE_FAKE_APPIUM_DRIVERS": ""}
+    # Pin EVERY slow live probe so the plan is deterministic run-to-run: this
+    # test asserts plan DETERMINISM, not live host state. Both `appium driver
+    # list` (10s timeout) and `brew list --versions` (4s timeout, except->False)
+    # can time out under heavy concurrent load (pytest -n auto), flipping the
+    # plan between the two runs and flaking this test.
+    env = {"MOBILE_USE_FAKE_APPIUM_DRIVERS": "", "MOBILE_USE_FAKE_BREW_PKGS": ""}
     rc1, out1, _ = _run_cli("bootstrap", "--dry-run", env=env)
     rc2, out2, _ = _run_cli("bootstrap", "--dry-run", env=env)
     assert rc1 == rc2
