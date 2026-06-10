@@ -380,10 +380,15 @@ class YoloDetector:
         if cached is not None:
             return cached
         try:
-            ok = load_detector(self.weights) is not None
+            model = load_detector(self.weights)
+            ok = model is not None
         except Exception:
-            ok = False
-        if not ok:
+            model, ok = None, False
+        if ok:
+            # Keep the verification load — a yolov8 deserialize costs ~0.5-1s,
+            # so available() + first predict() must cost ONE load, not two.
+            self._model = model
+        else:
             _warn_unloadable(self.weights)
         _LOADABLE_CACHE[key] = ok
         return ok

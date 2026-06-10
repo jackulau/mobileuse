@@ -121,6 +121,26 @@ def test_available_true_and_loads_at_most_once(tmp_path, monkeypatch):
     assert len(calls) == 1                    # loaded at most once per (path, mtime)
 
 
+def test_available_then_load_costs_one_deserialize(tmp_path, monkeypatch):
+    """goal/022 D6: _loads() used to verify-load the checkpoint, DISCARD it, then
+    load() deserialized it again — two ~0.5-1s loads where one suffices. The
+    verification model is now kept, so available() + load() + predict-path
+    construction is exactly ONE YOLO() call."""
+    import sys
+    w = tmp_path / "best.pt"
+    w.write_bytes(b"weights")
+    calls = []
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        _fake_ultralytics_loader(load_calls=calls))
+    monkeypatch.setattr(td, "available", lambda: True)
+    td._LOADABLE_CACHE.clear()
+    det = YoloDetector(str(w))
+    assert det.available() is True
+    model = det.load()
+    assert model is not None
+    assert len(calls) == 1, "available()+load() must cost ONE deserialize"
+
+
 def test_available_false_and_warns_once_on_unloadable(tmp_path, monkeypatch, capsys):
     import sys
     w = tmp_path / "bad.pt"
