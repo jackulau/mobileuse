@@ -107,6 +107,37 @@ def _validate_call_args(fn, kwargs):
     return None
 
 
+def _llm_accepts_images(llm):
+    """True when the callable explicitly declares an ``images`` parameter.
+
+    Strict by design: a bare ``**kwargs`` does NOT count — passing images to a
+    callable that silently ignores them would just burn tokens. Plain
+    prompt-only callables keep working unchanged."""
+    try:
+        sig = inspect.signature(llm)
+    except (TypeError, ValueError):
+        return False
+    return "images" in sig.parameters
+
+
+def _state_screenshot_bytes(state):
+    """PNG bytes for the current screen, or None. Tolerates both perception
+    shapes (``screenshot_path`` str and ``screenshot`` dict/str)."""
+    p = state.get("screenshot_path")
+    if not p:
+        shot = state.get("screenshot")
+        if isinstance(shot, dict):
+            p = shot.get("path")
+        elif isinstance(shot, str):
+            p = shot
+    if not p:
+        return None
+    try:
+        return open(p, "rb").read()
+    except OSError:
+        return None
+
+
 def _parse_json_block(raw):
     """Parse a strict-JSON object from an LLM reply, tolerating ```json fences.
 
@@ -657,6 +688,7 @@ class AgentLoop:
         """
         if not callable(llm):
             raise TypeError("run: llm must be callable(prompt) -> str")
+        llm_wants_images = _llm_accepts_images(llm)
         self.start()
         history = []
         self._last_replayed_sig = None
@@ -693,7 +725,11 @@ class AgentLoop:
             else:
                 prompt = self._build_agent_prompt(task, state, history)
                 try:
-                    raw = llm(prompt)
+                    if llm_wants_images:
+                        img = _state_screenshot_bytes(state)
+                        raw = llm(prompt, images=[img] if img else None)
+                    else:
+                        raw = llm(prompt)
                 except Exception as e:
                     self._accrue(timings, perceive=(t1 - t0), decide=(time.perf_counter() - t1))
                     history.append({"step": step, "error": f"llm error: {e}"})
@@ -1039,8 +1075,9 @@ def run_agent(platform=None, args=None):
             if llm is None:
                 sys.exit(
                     "Autonomous --task needs an LLM. Set ANTHROPIC_API_KEY and "
-                    "`pip install anthropic`, or call AgentLoop.run(task, llm) "
-                    "from Python with your own llm callable."
+                    "install the agent extra: `pip install mobile-use[agent]`. "
+                    "Or call AgentLoop.run(task, llm) from Python with your "
+                    "own llm callable."
                 )
             max_steps = int(os.environ.get("MOBILE_USE_AGENT_MAX_STEPS", "20"))
             result = agent.run(task, llm, max_steps=max_steps)
@@ -1053,11 +1090,14 @@ def run_agent(platform=None, args=None):
 
 
 def _default_llm():
-    """Build a callable(prompt)->str backed by Anthropic, when configured.
+    """Build a callable(prompt, images=None)->str backed by Anthropic.
 
-    Returns None (caller prints a hint) if ANTHROPIC_API_KEY is unset or the
-    anthropic SDK isn't installed — the harness keeps anthropic an OPTIONAL dep,
-    so --task degrades gracefully and AgentLoop.run() still accepts any llm.
+    ``images`` is an optional list of PNG bytes, sent as multimodal image
+    blocks ahead of the prompt — tree-less screens (games, canvas, web views)
+    get real VLM grounding instead of an empty marks list. Returns None
+    (caller prints a hint) if ANTHROPIC_API_KEY is unset or the anthropic SDK
+    isn't installed — anthropic stays an OPTIONAL dep
+    (``pip install mobile-use[agent]``), and AgentLoop.run() accepts any llm.
     """
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
@@ -1069,10 +1109,21 @@ def _default_llm():
     client = anthropic.Anthropic(api_key=key)
     model = os.environ.get("MOBILE_USE_AGENT_MODEL", "claude-sonnet-4-6")
 
-    def _llm(prompt):
+    def _llm(prompt, images=None):
+        if images:
+            import base64
+            content = [
+                {"type": "image",
+                 "source": {"type": "base64", "media_type": "image/png",
+                            "data": base64.standard_b64encode(img).decode()}}
+                for img in images if img
+            ]
+            content.append({"type": "text", "text": prompt})
+        else:
+            content = prompt
         msg = client.messages.create(
             model=model, max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
 

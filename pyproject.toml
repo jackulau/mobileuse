@@ -45,6 +45,9 @@ dev = [
     "pytest-xdist>=3.5",    # fast local lane: pytest -n auto tests -q
     "ruff>=0.4",
 ]
+agent = [
+    "anthropic>=0.40",      # default multimodal LLM for `mobile-use agent --task`
+]
 
 [project.urls]
 Homepage = "https://github.com/jackulau/mobile_use"
