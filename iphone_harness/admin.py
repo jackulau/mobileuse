@@ -148,6 +148,36 @@ def ensure_cache_bust(name=None):
         _ensure_ok_at.pop(name, None)
 
 
+def _maybe_refresh_wifi_wda(env=None):
+    """One mDNS re-resolve when IPH_WDA_URL is set but unreachable — cable-free
+    sessions self-heal after a DHCP address change. Updates the process env
+    (and the spawn env) only; the persistent refresh is `mobile-use wifi
+    reconnect`. Never raises, never loops."""
+    e = env if env is not None else os.environ
+    url = e.get("IPH_WDA_URL") or os.environ.get("IPH_WDA_URL", "")
+    if not url:
+        return
+    try:
+        from mobile_use.netcheck import target_reachable
+        ok, _detail = target_reachable(url, timeout=2.0)
+        if ok:
+            return
+        import re as _re
+
+        from mobile_use.devices import WDA_DEFAULT_PORT, ios_wifi_target
+        m = _re.match(r"https?://([^:/]+)(?::(\d+))?", url)
+        host = m.group(1) if m else None
+        port = int(m.group(2)) if (m and m.group(2)) else WDA_DEFAULT_PORT
+        res = ios_wifi_target(udid=os.environ.get("IPH_UDID"), host=host,
+                              port=port, probe=True)
+        if res and res.get("reachable") and res["url"] != url:
+            os.environ["IPH_WDA_URL"] = res["url"]
+            if env is not None:
+                env["IPH_WDA_URL"] = res["url"]
+    except Exception:
+        pass
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     """Spawn the daemon if no live one is reachable. Idempotent.
 
@@ -199,6 +229,7 @@ def ensure_daemon(wait=30.0, name=None, env=None):
     else:
         ensure_cache_bust(name)
 
+    _maybe_refresh_wifi_wda(env)
     # Stale .sock or .pid from a hard-killed previous daemon would confuse spawn.
     cleanup_stale(name)
 

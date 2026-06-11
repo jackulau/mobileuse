@@ -473,6 +473,22 @@ def main():
         from . import devices as _devices
         sys.exit(_devices.main(remaining[1:]))
 
+    # wifi <action> — wireless connection management (both platforms).
+    if remaining and remaining[0] == "wifi":
+        if len(remaining) < 2 or remaining[1] in {"-h", "--help"}:
+            print(
+                "mobile-use wifi — wireless connection management:\n\n"
+                "  reconnect [--json]    Re-establish every remembered wireless device\n"
+                "                        (android: adb connect; ios: mDNS re-resolve).\n"
+                "                        Devices are remembered by `--persist` (see\n"
+                "                        `android wifi` / `ios wifi`).\n"
+            )
+            sys.exit(0 if len(remaining) >= 2 else 2)
+        if remaining[1] == "reconnect":
+            from . import devices as _devices
+            sys.exit(_devices.wifi_reconnect_main(remaining[2:]))
+        sys.exit(f"Unknown `mobile-use wifi` action: {remaining[1]!r}. Try `mobile-use wifi --help`.")
+
     # ios <action> — iOS-specific subcommands.
     if remaining and remaining[0] == "ios":
         if len(remaining) < 2 or remaining[1] in {"-h", "--help"}:

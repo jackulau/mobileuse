@@ -129,6 +129,26 @@ def ensure_cache_bust(name=None):
         _ensure_ok_at.pop(name, None)
 
 
+def _maybe_reconnect_wifi_device(env=None):
+    """One adb-connect attempt when ANH_UDID is an ip:port serial that's not
+    currently in `adb devices` — sessions self-heal after a host reboot or adb
+    server restart without the user re-running `android wifi`. Never raises,
+    never loops; the persistent variant is `mobile-use wifi reconnect`."""
+    serial = (env or os.environ).get("ANH_UDID", "")
+    try:
+        from mobile_use.netcheck import looks_like_wifi_serial
+        if not looks_like_wifi_serial(serial):
+            return
+        from mobile_use.devices import _run_adb, adb_connect
+        ok, out = _run_adb(["devices"])
+        if ok and serial in out:
+            return
+        host, _, port_s = serial.rpartition(":")
+        adb_connect(host, int(port_s) if port_s.isdigit() else 5555)
+    except Exception:
+        pass
+
+
 def ensure_daemon(wait=30.0, name=None, env=None):
     name = name or NAME
 
@@ -169,6 +189,7 @@ def ensure_daemon(wait=30.0, name=None, env=None):
     else:
         ensure_cache_bust(name)
 
+    _maybe_reconnect_wifi_device(env)
     cleanup_stale(name)
 
     e = {**os.environ, **({"ANH_NAME": name} if name else {}), **(env or {})}

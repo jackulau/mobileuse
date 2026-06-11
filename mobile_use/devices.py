@@ -527,6 +527,112 @@ def ios_wifi_main(argv):
     return 0 if (reach or not probe) else 1
 
 
+# ---- wifi reconnect (re-establish every remembered wireless device) --------
+
+WIFI_RECONNECT_HELP = """\
+mobile-use wifi reconnect — re-establish every remembered wireless device.
+
+USAGE:
+  mobile-use wifi reconnect             android: adb connect; ios: mDNS re-resolve
+  mobile-use wifi reconnect --json      machine-readable per-device results
+  mobile-use wifi reconnect --android   only android entries
+  mobile-use wifi reconnect --ios       only ios entries
+
+Devices land in the remember-store via `--persist`:
+  mobile-use android wifi <ip> --persist
+  mobile-use ios wifi --persist
+
+Exit 0 when every device reconnected (or the store is empty), 1 otherwise.
+"""
+
+
+def wifi_reconnect(platform=None, timeout=2.0):
+    """Re-establish every remembered wireless device.
+
+    android: reachability-probe then ``adb connect host:port`` (fail fast with
+    a clear message when the phone left the network). ios: re-resolve via
+    ios_wifi_target — mDNS tolerates a DHCP IP change — and write the refreshed
+    wda_url back to the store (and to .env when IPH_WDA_URL is already
+    persisted there).
+
+    Returns a list of ``{platform, id, ok, detail}`` dicts.
+    """
+    from mobile_use.netcheck import tcp_reachable
+    from mobile_use.wifi_store import remember_device, remembered_devices
+
+    results = []
+    for e in remembered_devices(platform):
+        plat = e.get("platform")
+        if plat == "android":
+            serial = e.get("serial") or ""
+            host, _, port_s = serial.rpartition(":")
+            port = int(port_s) if port_s.isdigit() else 5555
+            reach, _detail = tcp_reachable(host, port, timeout=timeout)
+            if not reach:
+                results.append({"platform": plat, "id": serial, "ok": False,
+                                "detail": f"{host}:{port} not reachable "
+                                          "(same Wi-Fi? device awake?)"})
+                continue
+            ok, detail = adb_connect(host, port)
+            if ok:
+                remember_device("android", serial=serial, host=host, port=port)
+            results.append({"platform": plat, "id": serial, "ok": ok,
+                            "detail": detail})
+        elif plat == "ios":
+            udid = e.get("udid")
+            old_url = e.get("wda_url") or ""
+            m = re.match(r"https?://([^:/]+)(?::(\d+))?", old_url)
+            host = m.group(1) if m else None
+            port = int(m.group(2)) if (m and m.group(2)) else WDA_DEFAULT_PORT
+            res = ios_wifi_target(udid=udid, host=host, port=port,
+                                  probe=True, timeout=timeout)
+            if res is None or not res.get("reachable"):
+                results.append({"platform": plat, "id": udid or old_url,
+                                "ok": False,
+                                "detail": "WDA not reachable (is WDA running? "
+                                          "tunnel up for iOS 17+?)"})
+                continue
+            url = res["url"]
+            remember_device("ios", wda_url=url, udid=udid)
+            if url != old_url:
+                envp = _env_path()
+                try:
+                    if envp.exists() and "IPH_WDA_URL=" in envp.read_text(encoding="utf-8"):
+                        _upsert_env_var(envp, "IPH_WDA_URL", url)
+                except OSError:
+                    pass
+                detail = f"re-resolved {old_url or '(none)'} -> {url}"
+            else:
+                detail = f"reachable at {url}"
+            results.append({"platform": plat, "id": udid or url, "ok": True,
+                            "detail": detail})
+        else:
+            results.append({"platform": plat or "?", "id": str(e), "ok": False,
+                            "detail": "unknown platform in store"})
+    return results
+
+
+def wifi_reconnect_main(argv):
+    """`mobile-use wifi reconnect [--json] [--ios|--android]`."""
+    if argv and argv[0] in {"-h", "--help"}:
+        print(WIFI_RECONNECT_HELP)
+        return 0
+    platform = "ios" if "--ios" in argv else ("android" if "--android" in argv else None)
+    results = wifi_reconnect(platform)
+    if "--json" in argv:
+        print(json.dumps(results, indent=2))
+        return 0 if all(r["ok"] for r in results) else 1
+    if not results:
+        print("No remembered wireless devices to reconnect.\n"
+              "  android: mobile-use android wifi <ip> --persist\n"
+              "  ios:     mobile-use ios wifi --persist")
+        return 0
+    for r in results:
+        mark = "ok" if r["ok"] else "FAIL"
+        print(f"[{mark}] {r['platform']} {r['id']}: {r['detail']}")
+    return 0 if all(r["ok"] for r in results) else 1
+
+
 # ---- iOS RemoteXPC tunnel (pymobiledevice3 tunneld) -----------------------
 
 TUNNELD_HOST = "127.0.0.1"
