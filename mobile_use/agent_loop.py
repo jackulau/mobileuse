@@ -53,6 +53,11 @@ ACTION_VERBS = [
     "wait", "wait_for_element", "wait_for_app",
 ]
 
+# Destructive verbs are refused unless MU_ALLOW_DESTRUCTIVE=1 — a hallucinated
+# action must not be able to remove apps/data by default. Checked BEFORE the
+# curated-set gate so the refusal wins even for allow_extra dispatch.
+DESTRUCTIVE_VERBS = frozenset({"uninstall_app"})
+
 
 # Memoized action schemas, keyed by the helpers MODULE OBJECT (weakly, so
 # test-injected fake modules are dropped on GC). The schema is pure introspection
@@ -130,10 +135,16 @@ class AgentLoop:
     The LLM provides the reasoning; this class provides the device interface.
     """
 
-    def __init__(self, platform="ios", session_name="default", collect=True):
+    def __init__(self, platform="ios", session_name="default", collect=True,
+                 allow_extra=None):
         self.platform = platform
         self.session = load_session(name=session_name, platform=platform)
         self.collector = Collector(session_name=session_name, platform=platform) if collect else None
+        # Verbs outside the curated ACTION_VERBS that THIS loop may dispatch —
+        # the deliberate escape hatch for custom helpers (act() refuses
+        # everything else, so injected workspace helpers aren't reachable by a
+        # hallucinated action name).
+        self.allow_extra = frozenset(allow_extra or ())
         self._helpers = None
         self._admin = None
         self._action_stack = []
@@ -434,6 +445,24 @@ class AgentLoop:
         """
         self._load_platform()
         h = self._helpers
+
+        # Destructive gate first — the refusal wins even for allow_extra verbs.
+        if action in DESTRUCTIVE_VERBS and os.environ.get("MU_ALLOW_DESTRUCTIVE") != "1":
+            return {"error": (f"Refused: {action!r} is destructive and disabled by "
+                              "default. Set MU_ALLOW_DESTRUCTIVE=1 to enable "
+                              "destructive actions."),
+                    "refused": "destructive"}
+
+        # Curated-set gate: only ACTION_VERBS (plus this loop's explicit
+        # allow_extra) dispatch. Everything else — hallucinated names, injected
+        # workspace helpers, module internals — gets a structured error instead
+        # of getattr-anything-and-call.
+        if action not in ACTION_VERBS and action not in self.allow_extra:
+            return {"error": (f"Unknown action: {action!r} — not in the curated "
+                              "action set (see ACTION_VERBS). Pass "
+                              "allow_extra={...} to AgentLoop to dispatch a "
+                              "custom helper deliberately."),
+                    "refused": "uncurated"}
 
         fn = getattr(h, action, None)
         if fn is None:
