@@ -847,6 +847,45 @@ def terminate_app(bundle_id):
     return appium("mobile: terminateApp", bundleId=bundle_id)
 
 
+def install_app(path):
+    """Install an app package onto the device (.ipa).
+
+    `path` must exist on the APPIUM SERVER's host — for remote setups that is
+    the machine running Appium, not necessarily this client.
+
+        install_app("/tmp/MyApp.ipa")
+    """
+    return _send({"method": "install_app", "params": {"path": str(path)}})["result"]
+
+
+def uninstall_app(bundle_id):
+    """Remove an app from the device. Destructive — the agent dispatch path
+    refuses this verb unless MU_ALLOW_DESTRUCTIVE=1."""
+    return _send({"method": "uninstall_app", "params": {"bundle_id": bundle_id}})["result"]
+
+
+def push_file(local, remote):
+    """Copy a LOCAL file onto the device at `remote`.
+
+    The file is read client-side and shipped base64 over the daemon RPC, so
+    the verb works across remote daemon transports (Windows/Linux client
+    driving a remote host).
+    """
+    import base64
+    data = base64.b64encode(open(local, "rb").read()).decode()
+    return _send({"method": "push_file",
+                  "params": {"remote": str(remote), "data_b64": data}})["result"]
+
+
+def pull_file(remote, local):
+    """Copy a device file at `remote` to a LOCAL path. Returns the local path."""
+    import base64
+    r = _send({"method": "pull_file", "params": {"remote": str(remote)}})["result"]
+    with open(local, "wb") as f:
+        f.write(base64.b64decode(r["data_b64"]))
+    return str(local)
+
+
 def app_state(bundle_id):
     """App run state as an int: 0 not installed, 1 not running, 2 suspended,
     3 background, 4 foreground."""
@@ -1583,6 +1622,11 @@ def _load_agent_helpers():
     spec.loader.exec_module(module)
     for k, v in vars(module).items():
         if k.startswith("_"):
+            continue
+        # Workspace helpers EXTEND the first-class API; they never shadow it.
+        # A workspace uninstall_app/tap/... silently replacing the real verb
+        # would change daemon-RPC semantics underneath every caller.
+        if k in globals():
             continue
         globals()[k] = v
 

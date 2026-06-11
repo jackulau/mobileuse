@@ -16,6 +16,7 @@ PID = str(ipc.pid_path(NAME))
 class MockDaemon:
     def __init__(self):
         self.stop = None
+        self._files = {}  # remote path -> base64 (push/pull round-trip)
         self._stream_running = False
         self._stream_frame_no = 0
         self._stream_fps = 6.0
@@ -37,6 +38,21 @@ class MockDaemon:
             return {"error": "missing method"}
         if method == "appium":
             return {"result": {"packageName": "com.android.launcher"}}
+        if method == "install_app":
+            return {"result": {"installed": (req.get("params") or {}).get("path")}}
+        if method == "uninstall_app":
+            return {"result": {"removed": (req.get("params") or {}).get("bundle_id")}}
+        if method == "push_file":
+            p = req.get("params") or {}
+            self._files[p.get("remote")] = p.get("data_b64")
+            return {"result": {"pushed": p.get("remote")}}
+        if method == "pull_file":
+            import base64 as _b64
+            p = req.get("params") or {}
+            data = self._files.get(p.get("remote"))
+            if data is None:
+                data = _b64.b64encode(b"mock-device-file").decode()
+            return {"result": {"data_b64": data}}
         if method == "screenshot":
             return {"result": {"path": "/tmp/anh-mock-shot.png", "bytes": 0}}
         if method == "window_size":

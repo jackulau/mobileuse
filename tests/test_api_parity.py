@@ -26,6 +26,7 @@ CORE = {
     # navigation / lifecycle
     "press_home", "press_back", "press_recents",
     "launch_app", "activate_app", "terminate_app", "is_app_installed", "app_state",
+    "install_app", "uninstall_app", "push_file", "pull_file",
     # device control
     "open_url", "get_clipboard", "set_clipboard", "set_location",
     "get_orientation", "set_orientation",

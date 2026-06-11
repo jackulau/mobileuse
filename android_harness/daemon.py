@@ -498,12 +498,44 @@ async def _m_set_orientation(d, params):
     return await d._drive(_set)
 
 
+async def _m_install_app(d, params):
+    """Install an app package from a path on the APPIUM SERVER's host. params: {path}."""
+    path = params["path"]
+    await d._drive(lambda: d.driver.install_app(path))
+    return {"installed": path}
+
+
+async def _m_uninstall_app(d, params):
+    """Remove an app from the device. params: {bundle_id}."""
+    bundle = params["bundle_id"]
+    await d._drive(lambda: d.driver.remove_app(bundle))
+    return {"removed": bundle}
+
+
+async def _m_push_file(d, params):
+    """Write base64 content to a device path. The CLIENT read the local file
+    (so the verb works over remote daemon transports). params: {remote, data_b64}."""
+    await d._drive(lambda: d.driver.push_file(params["remote"], params["data_b64"]))
+    return {"pushed": params["remote"]}
+
+
+async def _m_pull_file(d, params):
+    """Read a device file as base64; the client writes it locally. params: {remote}."""
+    data = await d._drive(lambda: d.driver.pull_file(params["remote"]))
+    return {"data_b64": data}
+
+
 _DISPATCH = {
     "appium":         _m_appium,
     "snapshot":       _m_snapshot,
     "get_orientation": _m_get_orientation,
     "set_orientation": _m_set_orientation,
     "screenshot":     _m_screenshot,
+    # Device file/app management (install/remove, push/pull files).
+    "install_app":    _m_install_app,
+    "uninstall_app":  _m_uninstall_app,
+    "push_file":      _m_push_file,
+    "pull_file":      _m_pull_file,
     "page_source":    _m_page_source,
     "window_size":    _m_window_size,
     "click_element":  _m_click_element,

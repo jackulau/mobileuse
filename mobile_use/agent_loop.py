@@ -46,6 +46,9 @@ ACTION_VERBS = [
     "open_notifications", "close_notifications",
     # app lifecycle
     "launch_app", "activate_app", "terminate_app",
+    "install_app", "uninstall_app",
+    # device files
+    "push_file", "pull_file",
     # device control
     "open_url", "set_clipboard", "set_location", "set_orientation",
     # dialogs / waits
