@@ -186,3 +186,60 @@ def test_devices_share_one_helpers_module_but_isolate_state():
     finally:
         helpers._reset_name(tok)
     assert helpers._active_name() == helpers.NAME  # restored
+
+
+# ---- threaded port-allocation uniqueness (TOCTOU race) -----------------------
+#
+# The old _allocate_appium_port had a check-then-use gap: two concurrent pool
+# builds could both see a port as free and both receive it. _port_is_free is
+# forced True below so these exercise ONLY the lock+claimed-set logic,
+# independent of host port state.
+
+def test_threaded_allocation_never_duplicates(monkeypatch):
+    import mobile_use.multibox as mb
+    monkeypatch.setattr(mb, "_claimed_ports", set())
+    monkeypatch.setattr(mb, "_assigned", {})
+    monkeypatch.setattr(mb, "_port_is_free", lambda *a, **k: True)
+
+    from concurrent.futures import ThreadPoolExecutor
+    names = [f"dev-{i}" for i in range(60)]
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        ports = list(ex.map(
+            lambda n: mb._allocate_port(n, mb._ANDROID_SYSTEM_RANGE), names))
+    assert len(ports) == len(set(ports)), "duplicate port handed out under threads"
+
+
+def test_threaded_same_name_gets_same_port(monkeypatch):
+    import mobile_use.multibox as mb
+    monkeypatch.setattr(mb, "_claimed_ports", set())
+    monkeypatch.setattr(mb, "_assigned", {})
+    monkeypatch.setattr(mb, "_port_is_free", lambda *a, **k: True)
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        ports = list(ex.map(
+            lambda _: mb._allocate_port("same-dev", mb._IOS_WDA_LOCAL_RANGE),
+            range(32)))
+    assert len(set(ports)) == 1, "same name must be idempotent under threads"
+
+
+def test_threaded_pool_builds_unique_driver_caps(monkeypatch):
+    import json as _json
+
+    import mobile_use.multibox as mb
+    monkeypatch.setattr(mb, "_claimed_ports", set())
+    monkeypatch.setattr(mb, "_assigned", {})
+    monkeypatch.setattr(mb, "_port_is_free", lambda *a, **k: True)
+
+    from concurrent.futures import ThreadPoolExecutor
+    pool = mb.DevicePool()
+    names = [f"px-{i}" for i in range(24)]
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        list(ex.map(lambda n: pool.add_android(n, udid=f"SER-{n}"), names))
+
+    sys_ports = [_json.loads(pool[n]._env["ANH_CAPS"])["appium:systemPort"]
+                 for n in names]
+    mjpeg_ports = [_json.loads(pool[n]._env["ANH_CAPS"])["appium:mjpegServerPort"]
+                   for n in names]
+    assert len(set(sys_ports)) == len(names)
+    assert len(set(mjpeg_ports)) == len(names)

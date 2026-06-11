@@ -24,12 +24,25 @@ Usage:
 """
 import functools
 import hashlib
+import json
 import os
 import re
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-_APPIUM_PORT_RANGE = (4724, 4799)
+_APPIUM_PORT_RANGE = (4724, 4799)        # dedicated-Appium-server opt-in
+_IOS_WDA_LOCAL_RANGE = (8101, 8199)      # appium:wdaLocalPort (host-side WDA forward)
+_ANDROID_SYSTEM_RANGE = (8200, 8299)     # appium:systemPort (UiAutomator2 server)
+_IOS_MJPEG_RANGE = (9101, 9199)          # appium:mjpegServerPort (iOS)
+_ANDROID_MJPEG_RANGE = (7811, 7899)      # appium:mjpegServerPort (Android)
+# Ranges stay clear of 4723 (the shared Appium server), 8100 (WDA device
+# default), 8400-8499 (_platform.daemon_tcp_port RPC range), and the
+# single-device mjpeg defaults 9100/7810.
+
+_alloc_lock = threading.Lock()
+_claimed_ports = set()   # every port handed out by this process
+_assigned = {}           # (range, name) -> port: idempotent per-name respawn
 
 
 def _store_entry_name(entry):
@@ -53,26 +66,54 @@ def _port_is_free(port, host="127.0.0.1"):
             return False
 
 
-def _allocate_appium_port(name, host="127.0.0.1"):
-    """Deterministic per-name port in 4724-4799 (skipping default 4723).
-
-    Hashes the name so repeated calls return the same port (idempotent
-    daemon respawn). If the chosen port is bound by something else, walks
-    the range until a free port is found. Raises if the whole range is
-    saturated.
+def _allocate_port(name, port_range, host="127.0.0.1"):
+    """Deterministic per-name port in `port_range`: sha256-modulo start +
+    linear probe. The same name in one process always returns the same port
+    (idempotent daemon respawn). The module lock + claimed-set close the
+    check-then-use race so concurrent pool builds (ThreadPoolExecutor) can
+    never hand out the same port twice. Raises when the range is saturated.
     """
-    low, high = _APPIUM_PORT_RANGE
+    low, high = port_range
     span = high - low + 1
     digest = int(hashlib.sha256(name.encode()).hexdigest(), 16)
     start = low + (digest % span)
-    for offset in range(span):
-        port = low + ((start - low + offset) % span)
-        if _port_is_free(port, host):
-            return port
+    key = (port_range, name)
+    with _alloc_lock:
+        if key in _assigned:
+            return _assigned[key]
+        for offset in range(span):
+            port = low + ((start - low + offset) % span)
+            if port in _claimed_ports:
+                continue
+            if _port_is_free(port, host):
+                _assigned[key] = port
+                _claimed_ports.add(port)
+                return port
     raise RuntimeError(
-        f"no free port in {low}-{high} for daemon {name!r}. "
-        f"Pass appium_url= explicitly or free up some ports."
+        f"no free port in {low}-{high} for {name!r}. "
+        f"Pass explicit ports (caps / appium_url=) or free up some ports."
     )
+
+
+def _allocate_appium_port(name, host="127.0.0.1"):
+    """Per-name DEDICATED Appium server port (opt-in; the pool default is one
+    shared server on 4723 with per-device driver ports doing the isolation)."""
+    return _allocate_port(name, _APPIUM_PORT_RANGE, host)
+
+
+def _merged_caps_json(env_var, auto_caps):
+    """Auto driver-port caps overlaid by the user's own IPH_CAPS/ANH_CAPS JSON
+    (user keys always win — same precedence the daemon applies)."""
+    user = {}
+    raw = os.environ.get(env_var, "")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                user = parsed
+        except ValueError:
+            pass
+    return json.dumps({**auto_caps, **user})
 
 
 class Device:
@@ -174,9 +215,11 @@ class DevicePool:
                 appium_url=None, platform_version=None, wda_url=None):
         """Add an iOS device to the pool.
 
-        If `appium_url` is None, auto-allocate a per-name port in 4724-4799
-        to avoid collisions when multiple named daemons run simultaneously.
-        Pass `appium_url=` explicitly to override (e.g. remote Appium).
+        Defaults to the shared Appium server (IPH_APPIUM_URL env var or 4723);
+        simultaneous sessions are isolated by auto-assigned per-name
+        appium:wdaLocalPort / appium:mjpegServerPort driver caps
+        (user-supplied IPH_CAPS keys always win). Pass `appium_url=` for a
+        dedicated server (e.g. a remote Mac).
 
         `wda_url` is the cable-free WebDriverAgent endpoint for THIS device —
         it rides the per-name env overrides (IPH_WDA_URL), so several Wi-Fi
@@ -189,13 +232,17 @@ class DevicePool:
             env["IPH_WDA_BUNDLE_ID"] = wda_bundle_id
         if appium_url:
             env["IPH_APPIUM_URL"] = appium_url
-        else:
-            port = _allocate_appium_port(f"ios-{name}")
-            env["IPH_APPIUM_URL"] = f"http://127.0.0.1:{port}"
+        # else: inherit the shared server (IPH_APPIUM_URL env var or 4723) —
+        # one quickstart-started Appium serves every pool device; isolation
+        # comes from the per-device driver ports below.
         if platform_version:
             env["IPH_PLATFORM_VERSION"] = platform_version
         if wda_url:
             env["IPH_WDA_URL"] = wda_url
+        env["IPH_CAPS"] = _merged_caps_json("IPH_CAPS", {
+            "appium:wdaLocalPort": _allocate_port(f"ios-wda-{name}", _IOS_WDA_LOCAL_RANGE),
+            "appium:mjpegServerPort": _allocate_port(f"ios-mjpeg-{name}", _IOS_MJPEG_RANGE),
+        })
 
         dev = Device(name, "ios", env)
         self._devices[name] = dev
@@ -204,17 +251,20 @@ class DevicePool:
     def add_android(self, name, udid, appium_url=None, platform_version=None):
         """Add an Android device to the pool.
 
-        If `appium_url` is None, auto-allocate a per-name port in 4724-4799
-        (different range slot than iOS via name prefix) to avoid collisions.
+        Defaults to the shared Appium server (ANH_APPIUM_URL env var or 4723);
+        simultaneous sessions are isolated by auto-assigned per-name
+        appium:systemPort / appium:mjpegServerPort driver caps (user-supplied
+        ANH_CAPS keys always win). Pass `appium_url=` for a dedicated server.
         """
         env = {"ANH_UDID": udid, "ANH_NAME": name}
         if appium_url:
             env["ANH_APPIUM_URL"] = appium_url
-        else:
-            port = _allocate_appium_port(f"android-{name}")
-            env["ANH_APPIUM_URL"] = f"http://127.0.0.1:{port}"
         if platform_version:
             env["ANH_PLATFORM_VERSION"] = platform_version
+        env["ANH_CAPS"] = _merged_caps_json("ANH_CAPS", {
+            "appium:systemPort": _allocate_port(f"android-sys-{name}", _ANDROID_SYSTEM_RANGE),
+            "appium:mjpegServerPort": _allocate_port(f"android-mjpeg-{name}", _ANDROID_MJPEG_RANGE),
+        })
 
         dev = Device(name, "android", env)
         self._devices[name] = dev

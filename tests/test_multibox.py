@@ -151,36 +151,60 @@ def test_add_from_udid_unknown_raises():
             pool.add_from_udid("NOSUCH")
 
 
-# ---- per-device Appium port allocation (D3) ---------------------------
+# ---- shared server + per-device driver ports (collision-free default) -------
 
-def test_add_ios_auto_allocates_port_when_no_url():
+def test_add_ios_defaults_to_shared_server_with_driver_ports():
+    import json as _json
+
+    from mobile_use.multibox import _IOS_MJPEG_RANGE, _IOS_WDA_LOCAL_RANGE
     pool = DevicePool()
     dev = pool.add_ios("phoneA", udid="U1")
-    assert dev._env.get("IPH_APPIUM_URL", "").startswith("http://127.0.0.1:")
-    port = int(dev._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
-    assert 4724 <= port <= 4799
+    # Shared server: no per-device Appium URL override — the daemon inherits
+    # IPH_APPIUM_URL env or the 4723 default.
+    assert "IPH_APPIUM_URL" not in dev._env
+    caps = _json.loads(dev._env["IPH_CAPS"])
+    assert _IOS_WDA_LOCAL_RANGE[0] <= caps["appium:wdaLocalPort"] <= _IOS_WDA_LOCAL_RANGE[1]
+    assert _IOS_MJPEG_RANGE[0] <= caps["appium:mjpegServerPort"] <= _IOS_MJPEG_RANGE[1]
 
 
-def test_add_android_auto_allocates_port_when_no_url():
+def test_add_android_defaults_to_shared_server_with_driver_ports():
+    import json as _json
+
+    from mobile_use.multibox import _ANDROID_MJPEG_RANGE, _ANDROID_SYSTEM_RANGE
     pool = DevicePool()
     dev = pool.add_android("pixA", udid="S1")
-    port = int(dev._env["ANH_APPIUM_URL"].rsplit(":", 1)[1])
-    assert 4724 <= port <= 4799
+    assert "ANH_APPIUM_URL" not in dev._env
+    caps = _json.loads(dev._env["ANH_CAPS"])
+    assert _ANDROID_SYSTEM_RANGE[0] <= caps["appium:systemPort"] <= _ANDROID_SYSTEM_RANGE[1]
+    assert _ANDROID_MJPEG_RANGE[0] <= caps["appium:mjpegServerPort"] <= _ANDROID_MJPEG_RANGE[1]
 
 
-def test_explicit_appium_url_skips_allocation():
+def test_explicit_appium_url_is_dedicated_server_opt_in():
     pool = DevicePool()
     dev = pool.add_ios("phoneB", udid="U2", appium_url="http://mac.local:4723")
     assert dev._env["IPH_APPIUM_URL"] == "http://mac.local:4723"
 
 
-def test_distinct_names_get_distinct_ports():
+def test_distinct_names_get_distinct_driver_ports():
+    import json as _json
     pool = DevicePool()
     a = pool.add_ios("alpha", udid="U1")
     b = pool.add_ios("beta", udid="U2")
-    pa = int(a._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
-    pb = int(b._env["IPH_APPIUM_URL"].rsplit(":", 1)[1])
-    assert pa != pb
+    ca, cb = _json.loads(a._env["IPH_CAPS"]), _json.loads(b._env["IPH_CAPS"])
+    assert ca["appium:wdaLocalPort"] != cb["appium:wdaLocalPort"]
+    assert ca["appium:mjpegServerPort"] != cb["appium:mjpegServerPort"]
+
+
+def test_user_supplied_caps_always_win(monkeypatch):
+    import json as _json
+    monkeypatch.setenv("ANH_CAPS", _json.dumps({"appium:systemPort": 8255,
+                                                "appium:disableWindowAnimation": True}))
+    pool = DevicePool()
+    dev = pool.add_android("pixUser", udid="S9")
+    caps = _json.loads(dev._env["ANH_CAPS"])
+    assert caps["appium:systemPort"] == 8255          # user value kept
+    assert caps["appium:disableWindowAnimation"] is True
+    assert "appium:mjpegServerPort" in caps           # auto port still added
 
 
 # ---- D5: parallel ensure_all_ready + broadcast + status ---------------
