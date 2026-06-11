@@ -46,6 +46,54 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
 
+      - name: Fresh-venv NON-editable install smoke (macOS/Linux)
+        if: runner.os != 'Windows'
+        # A real `pip install .` into a fresh venv — proves the wheel metadata,
+        # entry points, and imports work without the repo checkout on sys.path
+        # (the editable install above can mask packaging bugs).
+        run: |
+          python -m venv /tmp/mu-fresh-venv
+          /tmp/mu-fresh-venv/bin/pip -q install .
+          /tmp/mu-fresh-venv/bin/python -c "import mobile_use.cli, iphone_harness.helpers, android_harness.helpers"
+          test -x /tmp/mu-fresh-venv/bin/mobile-use
+          /tmp/mu-fresh-venv/bin/mobile-use --version
+
+  docker-linux-install:
+    name: fresh ubuntu container install (Dockerfile.linux-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Real out-of-box Linux install: build the fresh ubuntu:24.04 container
+      # (apt deps + pip install) and run its Linux-focused test set.
+      - name: Build container
+        run: docker build -f Dockerfile.linux-test -t mobile-use-linux-test .
+      - name: Run container test set
+        run: docker run --rm mobile-use-linux-test
+
+  xdist:
+    name: pytest -n auto ([dev] extras lane)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # The documented fast lane: [dev] extras + pytest-xdist. Proves the suite
+      # stays xdist-safe (no hidden ordering/shared-state coupling).
+      - name: Install with dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Linux — install adb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y android-tools-adb
+      - name: Run tests parallel
+        run: python -m pytest -n auto -q
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+
   lint:
     name: ruff
     runs-on: ubuntu-latest

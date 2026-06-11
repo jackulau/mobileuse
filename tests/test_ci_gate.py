@@ -43,3 +43,25 @@ def test_ci_adb_step_stays_linux_gated():
     assert "runner.os == 'Linux'" in ci, (
         "the adb install step must stay gated on `runner.os == 'Linux'`"
     )
+
+
+# ---- real out-of-box install exercised (not just mocked) ----------------------
+
+def test_ci_has_docker_fresh_container_job():
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "Dockerfile.linux-test" in ci, "CI must build the fresh-container image"
+    assert "docker build" in ci
+    assert "docker run --rm mobile-use-linux-test" in ci
+
+
+def test_ci_has_non_editable_install_smoke():
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "mu-fresh-venv" in ci, "CI must do a fresh-venv NON-editable install"
+    assert "pip -q install ." in ci
+    assert "test -x /tmp/mu-fresh-venv/bin/mobile-use" in ci
+
+
+def test_ci_has_xdist_dev_extras_lane():
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "pip install -e .[dev]" in ci, "CI must exercise the [dev] extras install"
+    assert "-n auto" in ci, "CI must run the documented pytest -n auto lane"
