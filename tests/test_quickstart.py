@@ -128,3 +128,17 @@ def test_appium_reachable_returns_false_on_url_error(monkeypatch):
         raise urllib.error.URLError("connection refused")
     monkeypatch.setattr(quickstart.urllib.request, "urlopen", boom)
     assert quickstart.appium_reachable() is False
+
+
+
+# ---- late-set APPIUM_URL honored (call-time lookup, not import-time capture) ----
+
+def test_quickstart_appium_url_is_call_time(monkeypatch):
+    from mobile_use import quickstart
+    monkeypatch.setenv("IPH_APPIUM_URL", "http://late-set-host:9999")
+    assert quickstart._appium_url() == "http://late-set-host:9999"
+    monkeypatch.delenv("IPH_APPIUM_URL", raising=False)
+    monkeypatch.setenv("ANH_APPIUM_URL", "http://android-late:8888")
+    assert quickstart._appium_url() == "http://android-late:8888"
+    monkeypatch.delenv("ANH_APPIUM_URL", raising=False)
+    assert quickstart._appium_url() == "http://127.0.0.1:4723"

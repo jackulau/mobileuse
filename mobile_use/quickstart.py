@@ -23,12 +23,17 @@ import urllib.request
 
 from mobile_use._platform import default_runtime_base, is_linux, is_macos
 
-APPIUM_URL = os.environ.get("IPH_APPIUM_URL") or os.environ.get("ANH_APPIUM_URL") or "http://127.0.0.1:4723"
+
+def _appium_url():
+    """Call-time lookup — IPH/ANH_APPIUM_URL set after import is honored."""
+    return (os.environ.get("IPH_APPIUM_URL")
+            or os.environ.get("ANH_APPIUM_URL")
+            or "http://127.0.0.1:4723")
 
 
 def appium_reachable(url=None, timeout=1.5):
     """True if the Appium server responds on /status. False on any error."""
-    url = (url or APPIUM_URL).rstrip("/") + "/status"
+    url = (url or _appium_url()).rstrip("/") + "/status"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.status == 200
@@ -46,7 +51,7 @@ def run_appium_phase(*, autostart=False):
     exact command the user needs to run.
     """
     if appium_reachable():
-        return True, f"Appium server reachable at {APPIUM_URL}"
+        return True, f"Appium server reachable at {_appium_url()}"
 
     appium_cli = shutil.which("appium")
     if appium_cli is None:
@@ -57,7 +62,7 @@ def run_appium_phase(*, autostart=False):
 
     if not autostart:
         return False, (
-            f"Appium server not running on {APPIUM_URL}.\n"
+            f"Appium server not running on {_appium_url()}.\n"
             "   Fix: open a separate terminal and run:\n"
             "     appium --base-path /\n"
             "   Or re-run quickstart with --autostart-appium to spawn it for you."
@@ -217,7 +222,7 @@ def main(argv=None, *, platform=None):
     print(f"mobile-use quickstart  ({platform})")
     print("=" * 60)
 
-    print(f"[preflight] Appium server on {APPIUM_URL}")
+    print(f"[preflight] Appium server on {_appium_url()}")
     ok, msg = run_appium_phase(autostart=args.autostart_appium)
     print(f"  {msg}")
     if not ok:

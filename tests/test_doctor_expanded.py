@@ -268,3 +268,13 @@ def test_android_cli_path_fix_windows_exe_detected(monkeypatch, tmp_path):
     fix = admin._cli_path_fix("android-harness", "python3 -m android_harness.run")
     assert "not on PATH" in fix
     assert "pip install" not in fix
+
+
+def test_admin_appium_url_is_call_time(monkeypatch):
+    """IPH/ANH_APPIUM_URL set AFTER import must be honored by doctor probes."""
+    from android_harness import admin as anh_admin
+    from iphone_harness import admin as ios_admin
+    monkeypatch.setenv("IPH_APPIUM_URL", "http://late-mac:4723")
+    monkeypatch.setenv("ANH_APPIUM_URL", "http://late-box:4723")
+    assert ios_admin._appium_url() == "http://late-mac:4723"
+    assert anh_admin._appium_url() == "http://late-box:4723"

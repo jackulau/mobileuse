@@ -276,3 +276,27 @@ def test_run_halts_with_xcode_remediation_when_missing(monkeypatch, capsys):
     assert "App Store" in out
     assert "xcode-select" in out
     assert rc == 1
+
+
+
+# ---- probes can't lie: fake seams print a loud warning -------------------------
+
+def test_run_warns_when_fake_seams_active(monkeypatch, capsys):
+    from mobile_use import bootstrap
+    monkeypatch.setenv("MOBILE_USE_FAKE_BREW_PKGS", "")
+    monkeypatch.setenv("MOBILE_USE_FAKE_APPIUM_DRIVERS", "")
+    monkeypatch.setattr(bootstrap.subprocess, "check_call", lambda *a, **k: 0)
+    bootstrap.run(ios=False, android=True, dry_run=True)
+    out = capsys.readouterr().out
+    assert "[warn]" in out
+    assert "fabricated" in out
+
+
+def test_run_no_warning_without_fake_seams(monkeypatch, capsys):
+    from mobile_use import bootstrap
+    monkeypatch.delenv("MOBILE_USE_FAKE_BREW_PKGS", raising=False)
+    monkeypatch.delenv("MOBILE_USE_FAKE_APPIUM_DRIVERS", raising=False)
+    monkeypatch.setattr(bootstrap.subprocess, "check_call", lambda *a, **k: 0)
+    bootstrap.run(ios=False, android=True, dry_run=True)
+    out = capsys.readouterr().out
+    assert "fabricated" not in out

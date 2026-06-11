@@ -232,12 +232,24 @@ def _resolve_argv0(cmd):
     return [resolved or cmd[0], *cmd[1:]]
 
 
+def _fake_seams_active():
+    """Names of MOBILE_USE_FAKE_* probe seams currently set (tests pin these
+    for determinism). Real install state is NOT being probed while they are."""
+    return sorted(k for k in ("MOBILE_USE_FAKE_BREW_PKGS",
+                              "MOBILE_USE_FAKE_APPIUM_DRIVERS")
+                  if os.environ.get(k) is not None)
+
+
 def run(ios=True, android=True, dry_run=False):
     """Execute the plan. Returns exit code (0 = all green)."""
     steps = plan(ios=ios, android=android)
     rc = 0
 
     print("mobile-use bootstrap")
+    fakes = _fake_seams_active()
+    if fakes:
+        print(f"[warn] {', '.join(fakes)} is set — reported state is fabricated "
+              "(test seams active, not live probes)")
     print(f"  iOS: {'yes' if ios else 'no'}   Android: {'yes' if android else 'no'}   "
           f"dry-run: {'yes' if dry_run else 'no'}")
     print()

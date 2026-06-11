@@ -19,7 +19,15 @@ from mobile_use._platform import (
 from . import _ipc as ipc
 
 NAME = os.environ.get("ANH_NAME", "default")
-APPIUM_URL = os.environ.get("ANH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+def _appium_url():
+    """Call-time lookup — ANH_APPIUM_URL set after import (quickstart
+    --autostart, pool env overrides) must be honored by doctor probes."""
+    return os.environ.get("ANH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+APPIUM_URL = _appium_url()  # import-time snapshot kept for back-compat repr/logs
 
 
 def is_remote_daemon(name=None):
@@ -262,7 +270,7 @@ def restart_daemon(name=None):
 
 def _check_appium():
     try:
-        with urllib.request.urlopen(f"{APPIUM_URL}/status", timeout=2.0) as r:
+        with urllib.request.urlopen(f"{_appium_url()}/status", timeout=2.0) as r:
             data = r.read().decode()
             return True, data[:200]
     except urllib.error.URLError as e:
@@ -523,7 +531,7 @@ def run_doctor():
         (".env with ANH_UDID", _check_env_file, (),
          "Copy .env.example to .env and fill in.  Or: `mobile-use init`"),
         ("Appium server reachable", _check_appium, (),
-         f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
+         f"Start Appium with `appium --base-path /` (port 4723; URL: {_appium_url()})"),
         ("Android device connected + USB debugging authorized", _check_device, (),
          "Plug in Android, Settings → Developer options → USB debugging → On, tap Allow on prompt"),
         ("Device battery level (>20% recommended)", _check_battery, (),

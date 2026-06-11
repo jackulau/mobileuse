@@ -25,7 +25,15 @@ from mobile_use._platform import (
 from . import _ipc as ipc
 
 NAME = os.environ.get("IPH_NAME", "default")
-APPIUM_URL = os.environ.get("IPH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+def _appium_url():
+    """Call-time lookup — IPH_APPIUM_URL set after import (quickstart
+    --autostart, pool env overrides) must be honored by doctor probes."""
+    return os.environ.get("IPH_APPIUM_URL", "http://127.0.0.1:4723")
+
+
+APPIUM_URL = _appium_url()  # import-time snapshot kept for back-compat repr/logs
 
 
 def is_remote_daemon(name=None):
@@ -325,7 +333,7 @@ IOS_REQUIRED_ENV = ("IPH_UDID", "IPH_XCODE_ORG_ID", "IPH_WDA_BUNDLE_ID")
 
 def _check_appium():
     try:
-        with urllib.request.urlopen(f"{APPIUM_URL}/status", timeout=2.0) as r:
+        with urllib.request.urlopen(f"{_appium_url()}/status", timeout=2.0) as r:
             data = r.read().decode()
             return True, data[:200]
     except urllib.error.URLError as e:
@@ -634,7 +642,7 @@ def run_doctor():
         (".env with IPH_UDID / IPH_XCODE_ORG_ID / IPH_WDA_BUNDLE_ID", _check_env_file, (),
          "Copy .env.example to .env and fill in.  Or: `mobile-use init`"),
         ("Appium server reachable", _check_appium, (),
-         f"Start Appium with `appium --base-path /` (port 4723; URL: {APPIUM_URL})"),
+         f"Start Appium with `appium --base-path /` (port 4723; URL: {_appium_url()})"),
         ("iPhone paired + Developer Mode on", _check_device, (),
          "Plug in iPhone, `Trust This Computer` if prompted, Settings → Privacy & Security → Developer Mode → On"),
         ("WebDriverAgent signed (provisioning profile present + not expired)", _check_wda_signing, (),
