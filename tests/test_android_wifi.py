@@ -134,7 +134,7 @@ def test_wifi_main_help():
 # ---- discovery surfaces TCP serials w/ transport tag ------------------------
 
 def test_discover_tags_transport(monkeypatch):
-    monkeypatch.setattr(devices, "_ios_udids", lambda: [])
+    monkeypatch.setattr(devices, "_idevice_udids", lambda flag, timeout=3.0: [])
     monkeypatch.setattr(devices, "_ios_sims", lambda: [])
     monkeypatch.setattr(devices, "_adb_devices_long",
                         lambda: [("192.168.1.5:5555", "Pixel 7"), ("39121FDJ", "Pixel 6")])
@@ -145,7 +145,7 @@ def test_discover_tags_transport(monkeypatch):
 
 
 def test_list_output_has_transport_column(monkeypatch, capsys):
-    monkeypatch.setattr(devices, "_ios_udids", lambda: [])
+    monkeypatch.setattr(devices, "_idevice_udids", lambda flag, timeout=3.0: [])
     monkeypatch.setattr(devices, "_ios_sims", lambda: [])
     monkeypatch.setattr(devices, "_adb_devices_long", lambda: [("192.168.1.5:5555", "Pixel 7")])
     devices._cmd_list([])

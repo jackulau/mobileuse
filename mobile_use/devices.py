@@ -30,16 +30,51 @@ def _which(cmd):
     return shutil.which(cmd)
 
 
-def _ios_udids():
+def _idevice_udids(flag, timeout=3.0):
+    """``idevice_id <flag>`` -> [udids]. ``-l`` lists USB devices, ``-n``
+    lists network (Wi-Fi) devices. Missing tool / any error -> [] silently."""
     if _which("idevice_id") is None:
         return []
     try:
         out = subprocess.check_output(
-            ["idevice_id", "-l"], timeout=3.0, stderr=subprocess.DEVNULL
+            ["idevice_id", flag], timeout=timeout, stderr=subprocess.DEVNULL
         ).decode().strip()
         return [u for u in out.splitlines() if u]
     except Exception:
         return []
+
+
+def _ios_udids():
+    """USB-connected iOS udids."""
+    return _idevice_udids("-l")
+
+
+def _ios_network_udids():
+    """Network (Wi-Fi) iOS udids — phones with the cable unplugged."""
+    return _idevice_udids("-n")
+
+
+def ios_udids_with_transport(timeout=3.0):
+    """Merged physical-iPhone list: ``[(udid, 'usb'|'wifi')]``.
+
+    Dedupe prefers usb — a phone listed by both ``-l`` and ``-n`` reports as
+    usb. The single source for every iOS-presence probe (discovery, init
+    auto-fill, cli platform auto-detect), so cable-unplugged iPhones are
+    visible everywhere.
+    """
+    usb = _idevice_udids("-l", timeout=timeout)
+    seen = set(usb)
+    out = [(u, "usb") for u in usb]
+    for u in _idevice_udids("-n", timeout=timeout):
+        if u not in seen:
+            out.append((u, "wifi"))
+            seen.add(u)
+    return out
+
+
+def ios_physical_udids(timeout=3.0):
+    """Physical iPhone udids over USB or Wi-Fi (merged + deduped)."""
+    return [u for u, _t in ios_udids_with_transport(timeout=timeout)]
 
 
 def _ios_sims():
@@ -733,17 +768,19 @@ def discover_connected():
     out = []
     seen_names = {}
 
-    ios_udids = _ios_udids()
-    for i, udid in enumerate(ios_udids, start=1):
+    ios_entries = ios_udids_with_transport()
+    for i, (udid, transport) in enumerate(ios_entries, start=1):
         name = _ios_name(udid) or f"ios-{i}"
-        out.append({"platform": "ios", "udid": udid, "name": name})
+        out.append({"platform": "ios", "udid": udid, "name": name,
+                    "transport": transport})
 
     # Booted iOS Simulators (skip any already reported as physical, just in case).
-    physical = set(ios_udids)
+    physical = {u for u, _t in ios_entries}
     for udid, sim_name in _ios_sims():
         if udid in physical:
             continue
-        out.append({"platform": "ios", "udid": udid, "name": sim_name, "simulator": True})
+        out.append({"platform": "ios", "udid": udid, "name": sim_name,
+                    "simulator": True, "transport": "sim"})
 
     from mobile_use.netcheck import looks_like_wifi_serial
     for i, (serial, model) in enumerate(_adb_devices_long(), start=1):

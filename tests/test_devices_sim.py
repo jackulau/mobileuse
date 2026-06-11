@@ -40,7 +40,7 @@ def test_ios_sims_parses_booted_only(monkeypatch):
 
 
 def test_discover_includes_booted_sim(monkeypatch):
-    monkeypatch.setattr(devices, "_ios_udids", lambda: [])
+    monkeypatch.setattr(devices, "_idevice_udids", lambda flag, timeout=3.0: [])
     monkeypatch.setattr(devices, "_adb_devices_long", lambda: [])
     monkeypatch.setattr(devices, "_ios_sims", lambda: [("SIM-UDID-1", "iPhone 15 Pro")])
     found = devices.discover_connected()

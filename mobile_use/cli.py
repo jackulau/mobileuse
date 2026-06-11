@@ -28,13 +28,12 @@ def _write_user_traceback():
 
 
 def _probe_ios_connected():
-    """One USB probe: any iOS device listed by idevice_id? (1.5s timeout)."""
+    """Any physical iPhone on USB or Wi-Fi (idevice_id -l / -n, 1.5s each) —
+    single-sourced from devices.py so auto-detect sees cable-unplugged phones."""
     try:
-        out = subprocess.check_output(
-            ["idevice_id", "-l"], timeout=1.5, stderr=subprocess.DEVNULL
-        ).decode().strip()
-        return bool(out)
-    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        from mobile_use.devices import ios_udids_with_transport
+        return bool(ios_udids_with_transport(timeout=1.5))
+    except Exception:
         return False
 
 

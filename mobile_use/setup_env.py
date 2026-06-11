@@ -27,14 +27,10 @@ ALT_ENV_PATH = REPO_ROOT / "agent-workspace" / ".env"
 # ---- detection -------------------------------------------------------------
 
 def _idevice_id():
-    if shutil.which("idevice_id") is None:
-        return []
-    try:
-        out = subprocess.check_output(["idevice_id", "-l"], timeout=3.0,
-                                      stderr=subprocess.DEVNULL).decode().strip()
-        return [u for u in out.splitlines() if u]
-    except Exception:
-        return []
+    """Physical iPhones over USB or Wi-Fi — single-sourced from devices.py so
+    `mobile-use init` auto-fills from a cable-unplugged phone too."""
+    from mobile_use.devices import ios_physical_udids
+    return ios_physical_udids()
 
 
 def _ios_sim_udids():

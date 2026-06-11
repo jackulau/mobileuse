@@ -275,3 +275,82 @@ def test_cli_devices_view_mock_starts_server():
             assert d["running"] is True
     finally:
         viewer.stop()
+
+
+# ---- wireless iPhones visible to discovery (idevice_id -n) --------------------
+
+def test_ios_transport_merge_prefers_usb(monkeypatch):
+    from mobile_use import devices
+
+    def fake(flag, timeout=3.0):
+        if flag == "-l":
+            return ["UDID-USB", "UDID-BOTH"]
+        return ["UDID-BOTH", "UDID-WIFI"]
+
+    monkeypatch.setattr(devices, "_idevice_udids", fake)
+    out = devices.ios_udids_with_transport()
+    assert ("UDID-USB", "usb") in out
+    assert ("UDID-BOTH", "usb") in out          # dedupe prefers usb
+    assert ("UDID-WIFI", "wifi") in out
+    assert len(out) == 3
+
+
+def test_discover_tags_network_iphone_wifi(monkeypatch):
+    from mobile_use import devices
+
+    def fake(flag, timeout=3.0):
+        return ["UDID-NET"] if flag == "-n" else []
+
+    monkeypatch.setattr(devices, "_idevice_udids", fake)
+    monkeypatch.setattr(devices, "_ios_sims", lambda: [])
+    monkeypatch.setattr(devices, "_ios_name", lambda u: "Jacks iPhone")
+    monkeypatch.setattr(devices, "_adb_devices_long", lambda: [])
+    out = devices.discover_connected()
+    assert len(out) == 1
+    assert out[0]["transport"] == "wifi"
+    assert out[0]["udid"] == "UDID-NET"
+
+
+def test_discover_usb_iphone_tags_usb(monkeypatch):
+    from mobile_use import devices
+
+    def fake(flag, timeout=3.0):
+        return ["UDID-CABLE"] if flag == "-l" else []
+
+    monkeypatch.setattr(devices, "_idevice_udids", fake)
+    monkeypatch.setattr(devices, "_ios_sims", lambda: [])
+    monkeypatch.setattr(devices, "_ios_name", lambda u: None)
+    monkeypatch.setattr(devices, "_adb_devices_long", lambda: [])
+    out = devices.discover_connected()
+    assert out[0]["transport"] == "usb"
+
+
+def test_idevice_udids_missing_tool_returns_empty(monkeypatch):
+    from mobile_use import devices
+    monkeypatch.setattr(devices, "_which", lambda c: None)
+    assert devices._idevice_udids("-l") == []
+    assert devices._idevice_udids("-n") == []
+
+
+def test_setup_env_detect_sees_network_iphone(monkeypatch):
+    from mobile_use import devices, setup_env
+
+    def fake(flag, timeout=3.0):
+        return ["UDID-NET"] if flag == "-n" else []
+
+    monkeypatch.setattr(devices, "_idevice_udids", fake)
+    monkeypatch.setattr(setup_env, "_ios_sim_udids", lambda: [])
+    monkeypatch.setattr(setup_env, "_adb_devices", lambda: [])
+    detected = setup_env.detect_devices()
+    assert detected["ios"] == ["UDID-NET"]
+
+
+def test_cli_platform_autodetect_sees_network_iphone(monkeypatch):
+    import mobile_use.cli as cli
+    from mobile_use import devices
+
+    def fake(flag, timeout=1.5):
+        return ["UDID-NET"] if flag == "-n" else []
+
+    monkeypatch.setattr(devices, "_idevice_udids", fake)
+    assert cli._probe_ios_connected() is True
