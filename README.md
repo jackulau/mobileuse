@@ -16,9 +16,31 @@ A thin, editable harness for putting LLM agents on real phones. The agent percei
   message sent — works on iPhone and Android
 ```
 
+## Why mobile_use
+
+The shortest path from "phone in hand" to "LLM agent driving it" — on macOS,
+Linux, or Windows, over USB or Wi-Fi, one device or ten:
+
+- **One-command install** that probes what's missing (`mobile-use bootstrap`)
+  and a doctor that reads your actual config and tells the truth.
+- **Wireless that remembers**: pair once (`android pair` survives reboots),
+  `--persist` saves the device, `wifi reconnect` (or the session itself)
+  re-establishes after host reboots and DHCP changes.
+- **Multi-device without port juggling**: one shared Appium server, per-device
+  driver ports auto-assigned collision-free, `DevicePool.from_remembered()`.
+- **Agent-native**: built-in agent loop with multimodal grounding, a
+  dependency-free MCP server (`mobile-use mcp`), curated action surface with a
+  destructive-verb gate, and an interactive live viewer.
+
+Honest feature matrix vs raw Appium, Maestro, mobile-mcp, DroidRun, AppAgent,
+and scrcpy — including where they win: [docs/comparison.md](docs/comparison.md).
+
 ## Quickstart
 
 Three commands, in order. Each one is idempotent — re-running is safe.
+
+> **Install from git.** `pip install mobile-use` from PyPI is a DIFFERENT,
+> unrelated project that happens to share the name — install from this repo.
 
 ```bash
 git clone https://github.com/jackulau/mobile_use.git && cd mobile_use
@@ -86,6 +108,7 @@ Node + Appium, then:
 ```powershell
 # Windows host (PowerShell):
 pip install -e .
+mobile-use bootstrap --android-only   # winget steps for adb + node, npm appium install
 mobile-use quickstart --android
 ```
 
@@ -392,7 +415,21 @@ pool.broadcast_ios(lambda d: d.active_app())
 pool.broadcast_android(lambda d: d.press_home())
 ```
 
-Each device gets its own named daemon instance (`IPH_NAME` / `ANH_NAME`) with separate sockets, so they don't collide.
+Each device gets its own named daemon instance (`IPH_NAME` / `ANH_NAME`) with
+separate sockets. All pool devices share ONE Appium server (4723, or your
+`IPH/ANH_APPIUM_URL`) — simultaneous sessions are isolated by auto-assigned
+per-device driver ports (`appium:systemPort` / `appium:wdaLocalPort` /
+`appium:mjpegServerPort`), deterministic per name and collision-free under
+concurrent pool builds. Your own caps always win. Pass `appium_url=` per
+device for a dedicated server (e.g. a remote Mac).
+
+Build pools without typing UDIDs:
+
+```python
+pool = DevicePool.from_connected()          # every USB/Wi-Fi device discovered now
+pool = DevicePool.from_remembered()         # every wireless device saved by --persist
+pool.add_ios("wifi-iphone", udid="...", wda_url="http://iPhone.local:8100")  # cable-free member
+```
 
 ## Headed mode — watch the device while it runs
 
@@ -406,9 +443,12 @@ mobile-use --ios --headed -c 'tap_at_xy(100, 200); time.sleep(2)'
 # → live mirror at ~6 fps, JPEG quality 60 (knobs in mobile_use/viewer/server.py)
 ```
 
-The viewer is read-only — it shows what the device is doing; it doesn't
-take input. Use `--headless` (or omit the flag) to skip it. Works on iOS
-and Android.
+The viewer is **interactive**: click the screen to tap that point on the
+device, type into the send box (or straight onto the page), and use the
+home button — with a visible control on/off toggle. Set
+`MOBILE_USE_VIEWER_READONLY=1` (or `--read-only` on `devices view`) for a
+plain mirror. Use `--headless` (or omit the flag) to skip the viewer
+entirely. Works on iOS and Android.
 
 Quality knobs (via Python API, when running in agent mode):
 
@@ -484,13 +524,32 @@ hood this sets Appium's `appium:webDriverAgentUrl`; an `IPH_CAPS` override still
 and prints the serial to use:
 
 ```bash
-mobile-use android wifi 192.168.1.42        # adb tcpip 5555 + adb connect
-# -> prints: ANH_UDID=192.168.1.42:5555
-ANH_UDID=192.168.1.42:5555 mobile-use --android -c 'print(active_app())'
+mobile-use android wifi 192.168.1.42 --persist      # adb tcpip + connect; saves ANH_UDID
+# -> .env updated AND device remembered (store: ~/.mobile_use/wifi_devices.json)
+mobile-use --android -c 'print(active_app())'
 mobile-use android wifi 192.168.1.42 --disconnect   # drop the wireless link
 ```
 
-`mobile-use devices list` shows a TRANSPORT column (usb / wifi) per device.
+**No cable, ever (Android 11+):** pair via Wireless debugging — pairing
+survives device reboots, unlike plain `adb tcpip`:
+
+```bash
+mobile-use android pair 192.168.1.42:37123 123456   # ip:port + code from the pairing dialog
+mobile-use android wifi 192.168.1.42 --persist
+```
+
+**Remembered devices auto-reestablish.** `--persist` (both platforms) writes
+the remember-store; reconnect everything after a host reboot / network change
+with one command — or let the session self-heal (the daemon ensure path
+retries wifi devices automatically):
+
+```bash
+mobile-use devices remembered          # what's saved (+ last_seen)
+mobile-use wifi reconnect              # android: adb connect; ios: mDNS re-resolve
+```
+
+`mobile-use devices list` shows a TRANSPORT column (usb / wifi) per device —
+including Wi-Fi-only iPhones (`idevice_id -n` is merged into discovery).
 Full walkthrough incl. the iOS tunnel: SETUP.md → "Wireless (Wi-Fi) control".
 
 ## Skills

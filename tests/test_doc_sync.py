@@ -124,3 +124,60 @@ def test_setup_documents_offline_base_model_and_self_validation():
     assert "offline" in SETUP.lower()
     assert "yolov8n.pt" in SETUP                # the committed base-model copy
     assert "trained_unverified" in SETUP        # the honest post-train status
+
+
+# ---- goal/023: competitive story + new commands/env documented ----------------
+
+def _read(rel):
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+
+
+def test_comparison_doc_names_all_competitors():
+    t = _read("docs/comparison.md")
+    for k in ("Appium", "Maestro", "mobile-mcp", "DroidRun", "AppAgent", "scrcpy"):
+        assert k in t, f"comparison.md must cover {k}"
+    # Honesty requirement: the doc admits where others win.
+    assert "Where others win" in t
+
+
+def test_comparison_claims_name_shipping_surface():
+    """Every flagship claim names a real command/module that exists."""
+    t = _read("docs/comparison.md")
+    for surface in ("mobile-use bootstrap", "mobile-use mcp", "wifi reconnect",
+                    "mobile_use/wifi_store.py", "mobile_use/multibox.py",
+                    "Dockerfile.linux-test", "install-wda"):
+        assert surface in t, f"comparison.md must name {surface}"
+
+
+def test_readme_links_comparison_and_warns_pypi():
+    t = _read("README.md")
+    assert "docs/comparison.md" in t
+    assert "DIFFERENT" in t and "PyPI" in t, "PyPI name-collision warning required"
+
+
+def test_new_env_vars_documented_and_read_by_code():
+    """Two-directional: each new env var is in .env.example AND read by code."""
+    env_example = _read(".env.example")
+    code = (_read("mobile_use/wifi_store.py") + _read("mobile_use/agent_loop.py")
+            + _read("iphone_harness/_ipc.py") + _read("android_harness/_ipc.py")
+            + _read("mobile_use/cli.py"))
+    for var in ("MU_WIFI_STORE", "MU_ALLOW_DESTRUCTIVE", "IPH_TOKEN", "ANH_TOKEN",
+                "MOBILE_USE_VIEWER_READONLY"):
+        assert var in env_example, f"{var} missing from .env.example"
+        assert var in code, f"{var} documented but not read by code"
+
+
+def test_cli_help_advertises_new_commands():
+    from mobile_use.cli import HELP
+    for cmd in ("android pair", "wifi reconnect", "devices remembered",
+                "ios install-wda", "mobile-use mcp"):
+        assert cmd in HELP, f"HELP must list {cmd}"
+
+
+def test_setup_covers_new_surfaces():
+    t = _read("SETUP.md")
+    for k in ("android pair", "wifi reconnect", "devices remembered",
+              "mcpServers", "mobile-use[agent]", "install-wda", "--read-only"):
+        assert k in t, f"SETUP.md must cover {k}"
+    assert "brew install uv" not in t, "unused uv install must stay gone"

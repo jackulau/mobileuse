@@ -310,10 +310,26 @@ DIAGNOSE:
 SETUP & MAINTENANCE:
   mobile-use ios sign-wda [--check]    re-sign WebDriverAgent (iOS #1 blocker)
   mobile-use ios build-wda [--check]   build WebDriverAgent test target (iOS first-run)
-  mobile-use android wifi <ip>         drive Android over Wi-Fi (adb tcpip + connect)
+  mobile-use ios install-wda <ipa>     install a pre-signed WDA via pymobiledevice3
+                                       (Linux/Windows: Mac needed once, not at runtime)
   mobile-use --reload                  nuke daemon (kills stale state)
   mobile-use --ios --reload            iOS daemon only
   mobile-use --android --reload        Android daemon only
+
+WIRELESS (auto-establishes; remembers devices):
+  mobile-use android pair <ip:port> <code>
+                                       pair via Wireless debugging (Android 11+,
+                                       survives reboots — no cable ever)
+  mobile-use android wifi <ip> --persist
+                                       adb tcpip + connect; save to .env + remember-store
+  mobile-use ios wifi --persist        resolve cable-free WDA URL (mDNS); save + remember
+  mobile-use wifi reconnect [--json]   re-establish every remembered wireless device
+  mobile-use devices remembered        list the wireless remember-store (last_seen)
+
+MCP (serve the device to Claude Desktop / Claude Code / Cursor):
+  mobile-use mcp [--ios|--android] [--name <device>]
+                                       stdio MCP server — tools from the curated
+                                       action set + screenshot + devices_list
 
 MACROS:
   mobile-use macro record <name>       record a tap/swipe sequence (REPL)
@@ -344,8 +360,9 @@ OPTIONS:
                           Lets a Windows or Linux host control iOS via a Mac
                           running Appium+WebDriverAgent+iphone-harness daemon.
                           Sets IPH_CONNECT (--ios) or ANH_CONNECT (--android).
-  --headed                Open a live device-screen viewer in your browser
-                          while the command runs (MJPEG at ~6 fps, JPEG q=60).
+  --headed                Open a live, INTERACTIVE device viewer in your browser
+                          while the command runs (click-to-tap, type, MJPEG ~6fps;
+                          MOBILE_USE_VIEWER_READONLY=1 for mirror-only).
   --headless              Explicit opt-out of viewer (default).
   --version               Show version
 

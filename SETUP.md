@@ -55,12 +55,6 @@ appium driver install xcuitest
 > appium driver install --source=npm appium-xcuitest-driver@10.43.1
 > ```
 
-### Install uv
-
-```bash
-brew install uv
-```
-
 ## A2. Plug in the iPhone
 
 Use a **data cable** (not charge-only). Tap **Trust This Computer** on the phone.
@@ -264,17 +258,52 @@ USB, restart the tunnel (`mobile-use ios tunnel`), and confirm the same LAN.
 
 ```bash
 # Device connected via USB first (so adb can switch it into TCP mode):
-mobile-use android wifi 192.168.1.42      # adb tcpip 5555 + adb connect 192.168.1.42:5555
-# -> prints: ANH_UDID=192.168.1.42:5555   (you can unplug USB now)
+mobile-use android wifi 192.168.1.42 --persist   # adb tcpip + connect + SAVE
+# -> ANH_UDID=192.168.1.42:5555 written to .env AND the remember-store
+#    (you can unplug USB now)
 
-ANH_UDID=192.168.1.42:5555 mobile-use --android -c 'print(active_app())'
+mobile-use --android -c 'print(active_app())'
 mobile-use android wifi 192.168.1.42 --disconnect    # end the wireless session
 ```
 
-`mobile-use devices list` shows a TRANSPORT column so you can tell usb from wifi.
+### No cable, ever — Android 11+ pairing
+
+`adb tcpip` reverts to USB when the device reboots. Wireless-debugging
+PAIRING survives reboots and never needs a cable:
+
+1. On the phone: Settings → Developer options → **Wireless debugging** → on →
+   **Pair device with pairing code** (shows an ip:port + 6-digit code — the
+   pairing port is random, NOT 5555).
+2. `mobile-use android pair 192.168.1.42:37123 123456`
+3. `mobile-use android wifi 192.168.1.42 --persist` (the connect ip:port is on
+   the main Wireless debugging screen).
+
+## Remembered devices + auto-reconnect (both platforms)
+
+`--persist` (on `android wifi` and `ios wifi`) writes the device into the
+remember-store (`~/.mobile_use/wifi_devices.json`; `MU_WIFI_STORE` overrides):
+
+```bash
+mobile-use devices remembered            # list saved wireless devices (+ last_seen)
+mobile-use wifi reconnect                # re-establish ALL of them after a reboot:
+                                         #   android -> adb connect <serial>
+                                         #   ios     -> mDNS re-resolve (DHCP-proof),
+                                         #              refreshed URL saved back
+mobile-use wifi reconnect --json         # machine-readable per-device results
+```
+
+Sessions also self-heal without the command: the daemon ensure path attempts
+one `adb connect` for a wifi-shaped ANH_UDID that's missing from `adb devices`,
+and one mDNS re-resolve when IPH_WDA_URL is set but unreachable.
+
+Build a multi-device pool from the store in Python:
+`DevicePool.from_remembered()` (see README → Multi-device).
+
+`mobile-use devices list` shows a TRANSPORT column so you can tell usb from
+wifi — Wi-Fi-only iPhones appear too (`idevice_id -n` merged into discovery).
 If `adb connect` fails: device + host must share a Wi-Fi network, the device must have
-been USB-connected for `adb tcpip` to switch it, and the adb TCP port must not be
-firewalled.
+been USB-connected for `adb tcpip` to switch it (or paired, above), and the adb
+TCP port must not be firewalled.
 
 ---
 
@@ -325,7 +354,8 @@ docker build -f Dockerfile.linux-test -t mobile-use-linux-test .
 docker run --rm mobile-use-linux-test python3 -m pytest -q
 ```
 
-This is the same image GitHub Actions runs on the Ubuntu matrix cell.
+CI builds and runs this exact image in its `docker-linux-install` job (the
+Ubuntu matrix cell itself runs natively on the runner, not in this image).
 
 ### macOS
 
@@ -348,12 +378,6 @@ brew install node
 ```bash
 npm i -g appium
 appium driver install uiautomator2
-```
-
-### Install uv
-
-```bash
-brew install uv
 ```
 
 ## B2. Enable USB Debugging on the Android device
@@ -484,13 +508,30 @@ In this mode the doctor's `Xcode` and `WebDriverAgent signed` checks are
 marked `OK: (skipped — Xcode is macOS-only; drive iOS from Linux via
 remote IPH_APPIUM_URL)`.
 
+## Pattern 3 — Bring your own signed WDA (Mac needed once, not at runtime)
+
+If you can borrow a Mac ONCE (yours, a teammate's, CI) to build + sign
+WebDriverAgent into an `.ipa` for your device, Linux/Windows can run the whole
+chain locally afterwards:
+
+```bash
+pip install pymobiledevice3
+mobile-use ios install-wda WebDriverAgent.ipa --udid <UDID>   # install onto the phone
+mobile-use ios tunnel            # iOS 17+: the one sudo tunnel step
+mobile-use ios wifi <device-ip> --persist                     # resolve + remember WDA URL
+mobile-use --ios -c 'print(active_app())'
+```
+
+Caveat: free Apple accounts re-sign weekly, paid yearly — the ipa needs
+re-signing from a Mac on that cadence.
+
 ## Why no fully-local Linux iOS path?
 
 Apple gates iOS automation behind Xcode-built and -signed `WebDriverAgent.app`.
 Linux can install [libimobiledevice](https://libimobiledevice.org/) and pair
 an iPhone, but it can't build/sign a runner from scratch — the toolchain is
-Apple-only. A prebuilt `.ipa` would still need provisioning-profile renewal
-from a Mac. The remote patterns above are simpler and don't drift.
+Apple-only. A prebuilt `.ipa` (Pattern 3) still needs provisioning-profile
+renewal from a Mac on the signing cadence. The remote patterns don't drift.
 
 ---
 
@@ -657,34 +698,31 @@ mobile-use --android --name pixel-1 -c 'print(active_app())'
 
 Sockets land at `/tmp/iph-<name>.sock` / `/tmp/anh-<name>.sock`.
 
-## D5. Appium port allocation
+## D5. Appium server + driver ports
 
-Every named daemon gets its own auto-allocated Appium port in the range
-**4724–4799** (the default unnamed daemon stays on 4723). Allocation is
-deterministic per name (same name → same port across restarts), and
-falls back if a chosen port is bound.
+**Default: one shared Appium server serves every pool device.** Pool devices
+inherit `IPH/ANH_APPIUM_URL` (or `http://127.0.0.1:4723`) — start Appium once
+(`appium --base-path /`, or `mobile-use quickstart --autostart-appium`) and
+add as many devices as you like.
 
-You can override:
+Simultaneous sessions are isolated by **auto-assigned per-device driver
+ports**, deterministic per name and collision-free under concurrent pool
+builds (a lock + claimed-set closes the allocation race):
+
+- Android: `appium:systemPort` (8200–8299) + `appium:mjpegServerPort` (7811–7899)
+- iOS: `appium:wdaLocalPort` (8101–8199) + `appium:mjpegServerPort` (9101–9199)
+
+Your own caps always win — anything you set in `IPH_CAPS`/`ANH_CAPS` overrides
+the auto-assignment.
+
+A dedicated server per device is still available — pass it explicitly:
 
 ```python
-pool.add_ios("iphone-A", udid="...", appium_url="http://127.0.0.1:4723")
+pool.add_ios("iphone-A", udid="...", appium_url="http://127.0.0.1:4724")
 pool.add_android("pixel-1", udid="...", appium_url="http://mac.local:4723")
 ```
 
-You'll need an Appium server listening on each allocated port. Two
-options:
-
-```bash
-# Option 1 — Appium handles many sessions on one port (default for single device):
-appium --base-path /                        # on 4723
-
-# Option 2 — separate Appium per device (recommended for multi-device):
-appium --base-path / --port 4724            # device A
-appium --base-path / --port 4775            # device B
-```
-
-The Python API doesn't spawn Appium for you — that's still your call.
-Plan: one Appium per port allocated by `DevicePool`.
+(You run those extra Appium instances yourself: `appium --base-path / --port 4724`.)
 
 ## D6. Troubleshooting multi-device
 
@@ -705,10 +743,13 @@ Plan: one Appium per port allocated by `DevicePool`.
 ## D7. Watching multiple screens at once
 
 Single live grid for every connected device — no per-device tabs, no
-manual port juggling.
+manual port juggling. **Interactive**: click any tile to tap that point on
+that device (toggle in the header turns control off); `--read-only` serves a
+plain mirror (control POSTs return 403).
 
 ```bash
 mobile-use devices view                          # browser opens to grid
+mobile-use devices view --read-only              # mirror only (no control)
 mobile-use devices view --no-browser             # print URL only
 mobile-use devices view --port 8765              # specific hub port
 mobile-use devices view --fps 6                  # higher per-device fps
@@ -758,6 +799,47 @@ locally.
 - **Want input control too?** The viewer is read-only by design. Drive
   input from a separate process via the Python API (e.g.
   `DevicePool.from_connected().broadcast(lambda d: d.tap_at_xy(...))`).
+
+# Part E — MCP server + agent LLM
+
+## E1. Serve the device to an MCP client
+
+`mobile-use mcp` is a dependency-free stdio MCP server — the curated action
+set (tap, type_text, swipe, launch_app, ...) plus `screenshot` (returns a real
+MCP image) and `devices_list`, dispatched through the hardened agent path
+(hallucinated tools refused; `uninstall_app` needs `MU_ALLOW_DESTRUCTIVE=1`).
+
+Claude Desktop / Claude Code / Cursor config:
+
+```json
+{
+  "mcpServers": {
+    "mobile-use": {
+      "command": "mobile-use",
+      "args": ["mcp", "--android"]
+    }
+  }
+}
+```
+
+Multi-device: `"args": ["mcp", "--ios", "--name", "iphone-A"]` — one server
+entry per named device.
+
+## E2. Autonomous agent LLM
+
+`mobile-use agent --task "..."` needs an LLM. Install the default
+(multimodal — screenshots are sent to the model for tree-less screens):
+
+```bash
+pip install mobile-use[agent]        # anthropic SDK
+export ANTHROPIC_API_KEY=sk-ant-...
+mobile-use agent --android --task "open settings and turn on dark mode"
+```
+
+Or pass any callable to `AgentLoop.run(task, llm)` from Python — callables
+declaring an `images=` kwarg receive the current screenshot as PNG bytes.
+
+---
 
 # Part F — Faster perception & local detection
 
