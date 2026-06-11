@@ -316,6 +316,9 @@ class Daemon:
     # ---- request handlers ----
 
     async def handle(self, req):
+        deny = ipc.authorize(req, NAME)
+        if deny:
+            return deny
         meta = req.get("meta")
         if meta == "ping":          return {"pong": True, "pid": os.getpid()}
         if meta == "shutdown":      self.stop.set(); return {"ok": True}

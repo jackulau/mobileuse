@@ -142,8 +142,79 @@ def spawn_kwargs():
     return {"start_new_session": True}
 
 
+def token_path(name):
+    """Per-name auto-token file (0600, runtime dir). TCP transports only."""
+    return _RUNTIME / f"{_runtime_stem(name)}.token"
+
+
+def _load_or_create_token(name):
+    p = token_path(name)
+    try:
+        tok = p.read_text(encoding="utf-8").strip()
+        if tok:
+            return tok
+    except (FileNotFoundError, OSError):
+        pass
+    import secrets
+    tok = secrets.token_hex(16)
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(tok)
+    return tok
+
+
+def expected_token(name=None):
+    """Token every TCP request must carry, or None for tokenless transports.
+
+    IPH_TOKEN env wins. Otherwise: TCP transports get a per-name secret
+    auto-generated + persisted 0600 in the runtime dir (the same-host client
+    auto-loads it, so local Windows works out of the box while every TCP
+    request still authenticates). AF_UNIX stays tokenless — socket file
+    permissions remain the boundary."""
+    env = os.environ.get("IPH_TOKEN")
+    if env:
+        return env
+    name = name or os.environ.get("IPH_NAME", "default")
+    if bind_endpoint(name)[0] != "tcp":
+        return None
+    return _load_or_create_token(name)
+
+
+def client_token(name):
+    """Token to attach to outgoing requests, or None.
+
+    IPH_TOKEN env wins (remote clients set it by hand). For TCP transports the
+    daemon's persisted token file is auto-loaded — same host, same user, zero
+    config. AF_UNIX sends no token."""
+    env = os.environ.get("IPH_TOKEN")
+    if env:
+        return env
+    if connect_endpoint(name)[0] != "tcp":
+        return None
+    try:
+        tok = token_path(name).read_text(encoding="utf-8").strip()
+        return tok or None
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def authorize(req, name):
+    """None when this request may proceed; an error dict to send back when it
+    must be rejected. Tokenless transports (AF_UNIX) always authorize."""
+    want = expected_token(name)
+    if want is None or req.get("token") == want:
+        return None
+    return {
+        "error": ("auth required: this daemon speaks TCP and every request "
+                  "must carry its token. Set IPH_TOKEN to the daemon's token "
+                  f"(same host: contents of {token_path(name)}) and retry."),
+        "auth": False,
+    }
+
+
 def connect(name, timeout=1.0):
-    """Blocking client. Returns (sock, token); token is always None.
+    """Blocking client. Returns (sock, token); token is None on AF_UNIX and
+    the auto-loaded/env token on TCP (request() attaches it per call).
 
     Endpoint comes from IPH_CONNECT (or default AF_UNIX path).
     """
@@ -155,7 +226,7 @@ def connect(name, timeout=1.0):
         return s, None
     _, host, port = ep
     s = socket.create_connection((host, port), timeout=timeout)
-    return s, None
+    return s, client_token(name)
 
 
 _MAX_MSG = 64 * 1024 * 1024  # 64 MB cap — covers any iPhone screenshot, screen video
@@ -244,21 +315,19 @@ async def serve(name, handler):
             os.umask(old_umask)
     else:
         _, host, port = ep
+        expected_token(name)  # ensure the per-name token exists before clients race it
         if host not in _LOOPBACK:
             print(
                 f"iphone-harness: WARNING — TCP daemon binding to {host}:{port} "
-                f"(non-loopback). RPC is unauthenticated; use an SSH tunnel "
+                f"(non-loopback). Every request must carry the daemon token "
+                f"(remote clients: set IPH_TOKEN to the contents of "
+                f"{token_path(name)}). Still prefer an SSH tunnel "
                 f"(ssh -L {port}:127.0.0.1:{port} <mac>) or restrict at firewall.",
                 file=sys.stderr,
             )
         server = await asyncio.start_server(handler, host=host, port=port, limit=_MAX_MSG)
     async with server:
         await asyncio.Event().wait()
-
-
-def expected_token():
-    """Always None — AF_UNIX + chmod 600 (or TCP loopback) is the boundary."""
-    return None
 
 
 def cleanup_endpoint(name):

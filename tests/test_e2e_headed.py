@@ -101,8 +101,8 @@ def test_e2e_headed_ios(monkeypatch):
                 assert data["running"] is True
     finally:
         try:
-            s, _ = ipc.connect(name, timeout=1.0)
-            ipc.request(s, None, {"meta": "shutdown"})
+            s, tok = ipc.connect(name, timeout=1.0)
+            ipc.request(s, tok, {"meta": "shutdown"})
             s.close()
         except Exception:
             pass
@@ -134,8 +134,8 @@ def test_e2e_headed_android(monkeypatch):
                 assert r.read()[:2] == b"\xff\xd8"
     finally:
         try:
-            s, _ = ipc.connect(name, timeout=1.0)
-            ipc.request(s, None, {"meta": "shutdown"})
+            s, tok = ipc.connect(name, timeout=1.0)
+            ipc.request(s, tok, {"meta": "shutdown"})
             s.close()
         except Exception:
             pass
@@ -174,9 +174,9 @@ def test_e2e_remote_iphone():
         assert is_remote_daemon() is True
 
         # Round-trip RPC over TCP.
-        s, _ = ipc.connect(name, timeout=1.0)
+        s, tok = ipc.connect(name, timeout=1.0)
         try:
-            r = ipc.request(s, None, {"method": "window_size", "params": {}})
+            r = ipc.request(s, tok, {"method": "window_size", "params": {}})
             assert r["result"]["width"] == 390
         finally:
             s.close()
@@ -185,8 +185,8 @@ def test_e2e_remote_iphone():
         assert not (Path("/tmp") / f"iph-{name}.sock").exists()
     finally:
         try:
-            s, _ = ipc.connect(name, timeout=1.0)
-            ipc.request(s, None, {"meta": "shutdown"})
+            s, tok = ipc.connect(name, timeout=1.0)
+            ipc.request(s, tok, {"meta": "shutdown"})
             s.close()
         except Exception:
             pass
@@ -231,8 +231,8 @@ def test_e2e_stream_loop_progresses(monkeypatch):
         assert stopped["running"] is False
     finally:
         try:
-            s, _ = ipc.connect(name, timeout=1.0)
-            ipc.request(s, None, {"meta": "shutdown"})
+            s, tok = ipc.connect(name, timeout=1.0)
+            ipc.request(s, tok, {"meta": "shutdown"})
             s.close()
         except Exception:
             pass

@@ -76,7 +76,7 @@ def _tcp_env(prefix, port):
 
 def _cleanup_files(platform, name):
     prefix = "iph" if platform == "iphone" else "anh"
-    for ext in ("sock", "pid", "log"):
+    for ext in ("sock", "pid", "log", "token"):
         try:
             (Path("/tmp") / f"{prefix}-{name}.{ext}").unlink()
         except FileNotFoundError:
@@ -230,9 +230,9 @@ def test_ipc_tcp_iphone_roundtrip():
                 assert iph_ipc.ping(name, timeout=1.0) is True
                 pid = iph_ipc.identify(name, timeout=1.0)
                 assert pid == p.pid
-                s, _ = iph_ipc.connect(name, timeout=1.0)
+                s, tok = iph_ipc.connect(name, timeout=1.0)
                 try:
-                    resp = iph_ipc.request(s, None, {"method": "window_size", "params": {}})
+                    resp = iph_ipc.request(s, tok, {"method": "window_size", "params": {}})
                     assert resp["result"]["width"] == 390
                 finally:
                     s.close()
@@ -286,8 +286,8 @@ def test_ipc_tcp_iphone_shutdown_via_ipc():
             os.environ["IPH_NAME"] = name
             try:
                 assert _wait_alive(iph_ipc, name, timeout=10.0)
-                s, _ = iph_ipc.connect(name, timeout=1.0)
-                resp = iph_ipc.request(s, None, {"meta": "shutdown"})
+                s, tok = iph_ipc.connect(name, timeout=1.0)
+                resp = iph_ipc.request(s, tok, {"meta": "shutdown"})
                 s.close()
                 assert resp == {"ok": True}
                 try:
@@ -315,9 +315,9 @@ def test_ipc_tcp_android_roundtrip():
             os.environ["ANH_NAME"] = name
             try:
                 assert _wait_alive(anh_ipc, name, timeout=10.0)
-                s, _ = anh_ipc.connect(name, timeout=1.0)
+                s, tok = anh_ipc.connect(name, timeout=1.0)
                 try:
-                    resp = anh_ipc.request(s, None, {"method": "window_size", "params": {}})
+                    resp = anh_ipc.request(s, tok, {"method": "window_size", "params": {}})
                     assert resp["result"]["width"] == 1080
                 finally:
                     s.close()
