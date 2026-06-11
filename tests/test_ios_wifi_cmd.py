@@ -57,6 +57,7 @@ def test_persist_writes_env(monkeypatch, tmp_path, capsys):
     _stub_target(monkeypatch, reachable=True)
     env = tmp_path / ".env"
     env.write_text("IPH_UDID=abc\nFOO=bar\n", encoding="utf-8")
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
     monkeypatch.setattr(devices, "_env_path", lambda: env)
     rc = devices.ios_wifi_main(["--persist"])
     assert rc == 0
@@ -70,12 +71,38 @@ def test_persist_replaces_existing_key(monkeypatch, tmp_path):
     _stub_target(monkeypatch, reachable=True, url="http://iPhone.local:8100")
     env = tmp_path / ".env"
     env.write_text("IPH_WDA_URL=http://old:8100\nKEEP=1\n", encoding="utf-8")
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
     monkeypatch.setattr(devices, "_env_path", lambda: env)
     devices.ios_wifi_main(["--persist"])
     body = env.read_text()
     assert "http://old:8100" not in body
     assert body.count("IPH_WDA_URL=") == 1
     assert "KEEP=1" in body
+
+
+def test_persist_also_remembers_device(monkeypatch, tmp_path):
+    _stub_target(monkeypatch, reachable=True)
+    env = tmp_path / ".env"
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    monkeypatch.setattr(devices, "_env_path", lambda: env)
+    monkeypatch.setenv("IPH_UDID", "00008140-AAA")
+    rc = devices.ios_wifi_main(["--persist"])
+    assert rc == 0
+    from mobile_use.wifi_store import remembered_devices
+    devs = remembered_devices("ios")
+    assert len(devs) == 1
+    assert devs[0]["wda_url"] == "http://iPhone.local:8100"
+    assert devs[0]["udid"] == "00008140-AAA"
+
+
+def test_no_persist_leaves_store_empty(monkeypatch, tmp_path):
+    _stub_target(monkeypatch, reachable=True)
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    monkeypatch.setattr(devices, "_env_path", lambda: tmp_path / ".env")
+    rc = devices.ios_wifi_main([])
+    assert rc == 0
+    from mobile_use.wifi_store import remembered_devices
+    assert remembered_devices() == []
 
 
 def test_invalid_port_exits_two(capsys):

@@ -177,6 +177,8 @@ USAGE:
   mobile-use android wifi <ip>              tcpip 5555 (over USB) then connect <ip>:5555
   mobile-use android wifi <ip:port>         use a non-default port
   mobile-use android wifi <ip> --usb SERIAL pick which USB device to switch (if several)
+  mobile-use android wifi <ip> --persist    write ANH_UDID=<ip:port> into .env AND the
+                                            remember-store (devices remembered / wifi reconnect)
   mobile-use android wifi <ip> --disconnect drop the adb-over-Wi-Fi connection
 
 On success it prints the ip:port serial to set as ANH_UDID. The device must be
@@ -185,13 +187,14 @@ USB-connected once so `adb tcpip` can switch it; after that it's wireless.
 
 
 def android_wifi_main(argv):
-    """`mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N]`."""
+    """`mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N] [--persist]`."""
     if not argv or argv[0] in {"-h", "--help"}:
         print(ANDROID_WIFI_HELP)
         return 0 if argv else 2
 
     target = None
     disconnect = False
+    persist = False
     usb = None
     port = None
     i = 0
@@ -199,6 +202,8 @@ def android_wifi_main(argv):
         a = argv[i]
         if a == "--disconnect":
             disconnect = True
+        elif a == "--persist":
+            persist = True
         elif a == "--usb" and i + 1 < len(argv):
             usb = argv[i + 1]; i += 1
         elif a == "--port" and i + 1 < len(argv):
@@ -213,7 +218,7 @@ def android_wifi_main(argv):
         i += 1
 
     if not target:
-        print("usage: mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N]",
+        print("usage: mobile-use android wifi <ip[:port]> [--disconnect] [--usb SERIAL] [--port N] [--persist]",
               file=sys.stderr)
         return 2
 
@@ -243,8 +248,16 @@ def android_wifi_main(argv):
               "  - device USB-connected once so `adb tcpip` could switch it (re-run on USB)\n"
               "  - the adb TCP port isn't firewalled")
         return 1
+    if persist:
+        serial = f"{ip}:{p}"
+        path = _upsert_env_var(_env_path(), "ANH_UDID", serial)
+        from mobile_use.wifi_store import remember_device
+        remember_device("android", serial=serial, host=ip, port=p)
+        print(f"persisted ANH_UDID={serial} to {path} and the remember-store "
+              "(`mobile-use devices remembered`)")
+        return 0
     print(f"\nConnected over Wi-Fi. Set this serial:\n  ANH_UDID={ip}:{p}\n"
-          "  (add it to .env, or `mobile-use init` after the device is reachable)")
+          "  (add it to .env, or re-run with --persist to save it + remember the device)")
     return 0
 
 
@@ -437,7 +450,10 @@ def ios_wifi_main(argv):
 
     if persist:
         path = _upsert_env_var(_env_path(), "IPH_WDA_URL", url)
-        print(f"persisted IPH_WDA_URL to {path}")
+        from mobile_use.wifi_store import remember_device
+        remember_device("ios", wda_url=url, udid=udid)
+        print(f"persisted IPH_WDA_URL to {path} and the remember-store "
+              "(`mobile-use devices remembered`)")
 
     print(f"\nSet this to drive over Wi-Fi:\n  IPH_WDA_URL={url}")
     print(f"\n{_ios17_tunnel_hint()}")
@@ -712,6 +728,8 @@ USAGE:
   mobile-use devices reload <name>  cleanup_stale + restart_daemon for one name.
   mobile-use devices reload --all   Reload every running named daemon.
   mobile-use devices view           Live MJPEG grid of every connected device.
+  mobile-use devices remembered     Wireless devices saved by --persist (with last_seen).
+  mobile-use devices remembered --json  Same, JSON output.
 
 DISCOVERY:
   iOS uses `idevice_id -l` (libimobiledevice).
@@ -983,6 +1001,27 @@ def _cmd_view(args):
     return 0
 
 
+def _cmd_remembered(args):
+    """`mobile-use devices remembered [--json]` — list the wireless store."""
+    from mobile_use.wifi_store import remembered_devices
+    devs = remembered_devices()
+    if "--json" in args:
+        print(json.dumps(devs, indent=2))
+        return 0
+    if not devs:
+        print("No remembered wireless devices yet.\n"
+              "  android: mobile-use android wifi <ip> --persist\n"
+              "  ios:     mobile-use ios wifi --persist")
+        return 0
+    print(f"{'PLATFORM':<9} {'ID':<30} {'ENDPOINT':<36} LAST SEEN")
+    for e in devs:
+        ident = e.get("serial") or e.get("udid") or "?"
+        endpoint = e.get("wda_url") or e.get("serial") or ""
+        print(f"{e.get('platform', '?'):<9} {ident:<30} {endpoint:<36} "
+              f"{e.get('last_seen', '')}")
+    return 0
+
+
 def main(args):
     if not args or args[0] in {"-h", "--help"}:
         print(HELP)
@@ -996,5 +1035,7 @@ def main(args):
         return _cmd_reload(sub_args)
     if sub == "view":
         return _cmd_view(sub_args)
+    if sub == "remembered":
+        return _cmd_remembered(sub_args)
     print(f"unknown subcommand {sub!r}\n\n{HELP}", file=sys.stderr)
     return 2

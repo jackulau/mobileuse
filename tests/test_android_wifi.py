@@ -170,3 +170,88 @@ def test_cli_routes_android_wifi(monkeypatch):
         cli.main()
     assert ei.value.code == 0
     assert seen["argv"] == ["10.0.0.5", "--port", "5557"]
+
+
+# ---- --persist writes .env AND the remember-store ----------------------------
+
+def _persist_env(monkeypatch, tmp_path, connect_ok=True):
+    envf = tmp_path / ".env"
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    monkeypatch.setattr(devices, "_env_path", lambda: envf)
+    monkeypatch.setattr(devices, "adb_enable_tcpip", lambda **k: (True, "ok"))
+    monkeypatch.setattr(
+        devices, "adb_connect",
+        lambda ip, p, **k: (True, f"connected to {ip}:{p}") if connect_ok
+        else (False, "failed to connect"))
+    return envf
+
+
+def test_wifi_main_persist_writes_env_and_store(monkeypatch, tmp_path):
+    envf = _persist_env(monkeypatch, tmp_path)
+    rc = devices.android_wifi_main(["192.168.1.5", "--persist"])
+    assert rc == 0
+    assert "ANH_UDID=192.168.1.5:5555" in envf.read_text(encoding="utf-8")
+    from mobile_use.wifi_store import remembered_devices
+    devs = remembered_devices("android")
+    assert len(devs) == 1
+    assert devs[0]["serial"] == "192.168.1.5:5555"
+
+
+def test_wifi_main_without_persist_writes_nothing(monkeypatch, tmp_path):
+    envf = _persist_env(monkeypatch, tmp_path)
+    rc = devices.android_wifi_main(["192.168.1.5"])
+    assert rc == 0
+    assert not envf.exists()
+    from mobile_use.wifi_store import remembered_devices
+    assert remembered_devices() == []
+
+
+def test_wifi_main_persist_connect_failure_persists_nothing(monkeypatch, tmp_path):
+    envf = _persist_env(monkeypatch, tmp_path, connect_ok=False)
+    rc = devices.android_wifi_main(["192.168.1.5", "--persist"])
+    assert rc == 1
+    assert not envf.exists()
+    from mobile_use.wifi_store import remembered_devices
+    assert remembered_devices() == []
+
+
+def test_wifi_main_persist_custom_port(monkeypatch, tmp_path):
+    envf = _persist_env(monkeypatch, tmp_path)
+    rc = devices.android_wifi_main(["10.0.0.7:5557", "--persist"])
+    assert rc == 0
+    assert "ANH_UDID=10.0.0.7:5557" in envf.read_text(encoding="utf-8")
+    from mobile_use.wifi_store import remembered_devices
+    assert remembered_devices("android")[0]["serial"] == "10.0.0.7:5557"
+
+
+# ---- devices remembered -------------------------------------------------------
+
+def test_devices_remembered_lists_store(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    remember_device("android", serial="192.168.1.5:5555")
+    remember_device("ios", wda_url="http://192.168.1.50:8100")
+    rc = devices.main(["remembered"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "192.168.1.5:5555" in out
+    assert "http://192.168.1.50:8100" in out
+    assert "LAST SEEN" in out
+
+
+def test_devices_remembered_json(monkeypatch, tmp_path, capsys):
+    import json as _json
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    remember_device("android", serial="192.168.1.5:5555")
+    rc = devices.main(["remembered", "--json"])
+    assert rc == 0
+    data = _json.loads(capsys.readouterr().out)
+    assert data[0]["serial"] == "192.168.1.5:5555"
+
+
+def test_devices_remembered_empty_prints_hint(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    rc = devices.main(["remembered"])
+    assert rc == 0
+    assert "--persist" in capsys.readouterr().out
