@@ -289,6 +289,99 @@ def build_main(argv):
     return rc
 
 
+INSTALL_WDA_HELP = """\
+mobile-use ios install-wda <WebDriverAgent.ipa> [--udid UDID]
+
+Install a PRE-SIGNED WebDriverAgent ipa onto the device via pymobiledevice3.
+Works from Linux and Windows — no Mac needed at runtime. A Mac is needed ONCE
+to build + sign the ipa (yours, a teammate's, or CI); after that this command
+plus the Wi-Fi flow drives the iPhone from any host.
+
+After install:
+  1. iOS 17+: start the tunnel        mobile-use ios tunnel
+  2. resolve + remember the WDA URL   mobile-use ios wifi <device-ip> --persist
+  3. drive it                         mobile-use --ios -c 'print(active_app())'
+
+Getting an ipa: build WebDriverAgent once in Xcode (`mobile-use ios
+build-wda`), then archive WebDriverAgentRunner-Runner.app into an .ipa.
+"""
+
+
+def _pymobiledevice3_cmd():
+    """argv prefix for pymobiledevice3, or None when not installed.
+
+    Console script when on PATH, else the module form (some pip installs only
+    register the package, not the script)."""
+    exe = shutil.which("pymobiledevice3")
+    if exe:
+        return [exe]
+    try:
+        import importlib.util
+        if importlib.util.find_spec("pymobiledevice3") is not None:
+            return [sys.executable, "-m", "pymobiledevice3"]
+    except Exception:
+        pass
+    return None
+
+
+def install_wda_main(argv):
+    """Entry: mobile-use ios install-wda <wda.ipa> [--udid UDID]"""
+    if not argv or argv[0] in {"-h", "--help"}:
+        print(INSTALL_WDA_HELP)
+        return 0 if argv else 2
+
+    ipa = None
+    udid = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--udid" and i + 1 < len(argv):
+            udid = argv[i + 1]; i += 1
+        elif not a.startswith("-") and ipa is None:
+            ipa = a
+        i += 1
+
+    if not ipa:
+        print("usage: mobile-use ios install-wda <WebDriverAgent.ipa> [--udid UDID]",
+              file=sys.stderr)
+        return 2
+    if not Path(ipa).exists():
+        print(f"ipa not found: {ipa}", file=sys.stderr)
+        return 2
+
+    prefix = _pymobiledevice3_cmd()
+    if prefix is None:
+        print("pymobiledevice3 is not installed.\n"
+              "  Fix: pip install pymobiledevice3", file=sys.stderr)
+        return 1
+
+    cmd = [*prefix, "apps", "install", ipa]
+    if udid:
+        cmd += ["--udid", udid]
+    print(f"installing {ipa} via `{' '.join(cmd)}` ...")
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT,
+                                      timeout=300).decode(errors="replace")
+    except subprocess.CalledProcessError as e:
+        print((e.output or b"").decode(errors="replace"))
+        print("install failed. Checklist:\n"
+              "  - device paired + unlocked (tap Trust if prompted)\n"
+              "  - the ipa is signed for THIS device (UDID in the provisioning profile)\n"
+              "  - iOS 17+: RemoteXPC tunnel running (`mobile-use ios tunnel`)",
+              file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(f"failed to run pymobiledevice3: {e}", file=sys.stderr)
+        return 1
+
+    print(out.strip() or "installed.")
+    print("\nNext steps:\n"
+          "  1. iOS 17+: keep the RemoteXPC tunnel up:  mobile-use ios tunnel\n"
+          "  2. resolve + remember the WDA URL:         mobile-use ios wifi <device-ip> --persist\n"
+          "  3. drive it:                               mobile-use --ios -c 'print(active_app())'")
+    return 0
+
+
 def main(argv):
     """Entry: mobile-use ios sign-wda [--check]"""
     if any(a in {"-h", "--help"} for a in argv):

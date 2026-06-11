@@ -501,6 +501,8 @@ def main():
                 "                        Prints/persists IPH_WDA_URL. --check probes reachability.\n"
                 "  tunnel [--check]      RemoteXPC tunnel status + the one `sudo` start command\n"
                 "                        (iOS 17+ needs it for cable-free to survive unplug).\n"
+                "  install-wda <ipa>     Install a pre-signed WebDriverAgent ipa via\n"
+                "                        pymobiledevice3 (Linux/Windows: no Mac at runtime).\n"
             )
             sys.exit(0 if len(remaining) >= 2 else 2)
         if remaining[1] == "sign-wda":
@@ -509,6 +511,9 @@ def main():
         if remaining[1] == "build-wda":
             from . import ios_wda
             sys.exit(ios_wda.build_main(remaining[2:]))
+        if remaining[1] == "install-wda":
+            from . import ios_wda
+            sys.exit(ios_wda.install_wda_main(remaining[2:]))
         if remaining[1] == "wifi":
             from . import devices as _devices
             sys.exit(_devices.ios_wifi_main(remaining[2:]))

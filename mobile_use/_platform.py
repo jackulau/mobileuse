@@ -57,6 +57,9 @@ def windows_ios_setup_hint() -> str:
         "     then `ssh -L 8763:127.0.0.1:8763 mac` from Windows.\n"
         "  3. On Windows: point the CLI at the tunneled daemon --\n"
         "     `mobile-use --ios --remote-daemon tcp://127.0.0.1:8763 -c ...`\n"
+        "Alternative (Mac needed ONCE, not at runtime): install a pre-signed\n"
+        "WebDriverAgent ipa with `mobile-use ios install-wda <wda.ipa>`, then\n"
+        "`mobile-use ios wifi <device-ip> --persist` to drive it cable-free.\n"
         "Docs: see SETUP.md -> 'iOS from Windows / Linux (remote Mac bridge)'."
     )
 
