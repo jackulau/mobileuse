@@ -962,9 +962,12 @@ USAGE:
   mobile-use devices view --devices A,B         Cherry-pick a subset by NAME (from `devices list`).
   mobile-use devices view --mock                Stub backend for CI / smoke tests.
 
+  mobile-use devices view --read-only          Mirror only: control POSTs return 403.
+
 The viewer hosts one MJPEG stream per device under /stream/<name> and a
-combined grid index at /. Loopback-only (no auth). Read-only mirror — use
-the agent loop / `-c` for input.
+combined grid index at /. Loopback-only (no auth). INTERACTIVE by default:
+click a tile to tap that device (POST /control/<name>); --read-only restores
+the plain mirror.
 """
 
 
@@ -1063,7 +1066,7 @@ def _parse_view_args(args):
     other subcommands (which use position-only conventions)."""
     parsed = {
         "no_browser": False, "port": None, "fps": 4,
-        "devices": None, "mock": False, "help": False,
+        "devices": None, "mock": False, "help": False, "read_only": False,
     }
     i = 0
     while i < len(args):
@@ -1074,6 +1077,8 @@ def _parse_view_args(args):
             parsed["no_browser"] = True
         elif a == "--mock":
             parsed["mock"] = True
+        elif a == "--read-only":
+            parsed["read_only"] = True
         elif a == "--port" and i + 1 < len(args):
             try:
                 parsed["port"] = int(args[i + 1])
@@ -1178,7 +1183,7 @@ def _cmd_view(args):
     try:
         viewer = MultiViewerServer(
             pairs, port=opts["port"], fps=opts["fps"],
-            client_factory=factory,
+            client_factory=factory, read_only=opts.get("read_only", False),
         )
     except ValueError as e:
         print(f"viewer init failed: {e}", file=sys.stderr)

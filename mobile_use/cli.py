@@ -132,7 +132,8 @@ def _maybe_start_viewer(platform):
         return None
     try:
         from mobile_use.viewer.server import ViewerServer
-        v = ViewerServer(platform=platform)
+        v = ViewerServer(platform=platform,
+                         read_only=os.environ.get("MOBILE_USE_VIEWER_READONLY") == "1")
         v.start()
         print(f"[mobile-use] live viewer at {v.url}  (--headless to disable)",
               file=sys.stderr)

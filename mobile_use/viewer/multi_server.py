@@ -66,7 +66,10 @@ def _grid_html(devices):
         "img{width:100%;display:block;background:#000;image-rendering:pixelated}"
         "</style></head><body>"
         "<header><span><b>mobile-use</b> &mdash; multi-device live view</span>"
-        '<span id=overall>polling…</span></header>'
+        '<span style="display:flex;gap:10px;align-items:center">'
+        '<label style="cursor:pointer;user-select:none">'
+        "<input type=checkbox id=ctl checked> control</label>"
+        '<span id=overall>polling…</span></span></header>'
         f"<main>{grid}</main>"
         "<script>\n"
         "async function tick(){\n"
@@ -84,6 +87,24 @@ def _grid_html(devices):
         "  }catch(e){document.getElementById('overall').textContent='viewer offline'}\n"
         "}\n"
         "tick();setInterval(tick,1000);\n"
+        "// click-to-tap per tile: click fraction -> POST /control/<name>\n"
+        "const ctl=document.getElementById('ctl');\n"
+        "for(const fig of document.querySelectorAll('figure[data-name]')){\n"
+        "  const img=fig.querySelector('img');\n"
+        "  img.style.cursor='crosshair';\n"
+        "  img.addEventListener('click',async (e)=>{\n"
+        "    if(!ctl.checked) return;\n"
+        "    const rect=img.getBoundingClientRect();\n"
+        "    const fx=(e.clientX-rect.left)/rect.width;\n"
+        "    const fy=(e.clientY-rect.top)/rect.height;\n"
+        "    try{\n"
+        "      const r=await fetch(`/control/${fig.dataset.name}`,{method:'POST',\n"
+        "        headers:{'Content-Type':'application/json'},\n"
+        "        body:JSON.stringify({action:'tap',fx:fx,fy:fy})});\n"
+        "      if(r.status===403){ctl.checked=false;ctl.disabled=true;}\n"
+        "    }catch(err){}\n"
+        "  });\n"
+        "}\n"
         "</script></body></html>"
     )
 
@@ -106,7 +127,7 @@ class MultiViewerServer:
     """
 
     def __init__(self, device_pairs, port=None, fps=4, quality=60, max_dim=800,
-                 host="127.0.0.1", client_factory=None):
+                 host="127.0.0.1", client_factory=None, read_only=False):
         if not device_pairs:
             raise ValueError("MultiViewerServer: at least one device required")
         seen = set()
@@ -129,6 +150,7 @@ class MultiViewerServer:
         self.fps = fps
         self.quality = quality
         self.max_dim = max_dim
+        self.read_only = read_only
 
         factory = client_factory or (lambda p, n, f, q, m: NamedStreamClient(
             platform=p, name=n, fps=f, quality=q, max_dim=m,
@@ -209,6 +231,46 @@ def _make_handler(viewer):
                 self._serve_still(path[len("/still/"):])
             else:
                 self.send_error(404, "not found")
+
+        def do_POST(self):
+            path = self.path.split("?", 1)[0]
+            if not path.startswith("/control/"):
+                self.send_error(404, "not found")
+                return
+            if viewer.read_only:
+                self.send_error(403, "viewer is read-only (--read-only)")
+                return
+            name = path[len("/control/"):]
+            device = devices_by_name.get(name)
+            if device is None:
+                self.send_error(404, f"unknown device {name!r}")
+                return
+            import json as _json
+
+            from mobile_use.viewer.server import _dispatch_control, _load_helpers
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = _json.loads(self.rfile.read(length) or b"{}")
+                helpers = _load_helpers(device["platform"])
+                result = _dispatch_control(helpers, body, bind_name=name)
+            except ValueError as e:
+                self._send_json({"ok": False, "error": str(e)}, status=400)
+                return
+            except Exception as e:
+                self._send_json({"ok": False, "error": f"control failed: {e}"},
+                                status=500)
+                return
+            self._send_json(result)
+
+        def _send_json(self, obj, status=200):
+            import json as _json
+            body = _json.dumps(obj).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
 
         def _serve_index(self):
             body = _grid_html(viewer.devices).encode()
