@@ -337,13 +337,11 @@ def ios_wifi_target(udid=None, host=None, port=WDA_DEFAULT_PORT, probe=True, tim
 
 
 def _env_path():
-    """The .env file to persist into — repo root, else agent-workspace, else default."""
-    from mobile_use.setup_env import ALT_ENV_PATH, DEFAULT_ENV_PATH
-    if DEFAULT_ENV_PATH.exists():
-        return DEFAULT_ENV_PATH
-    if ALT_ENV_PATH.exists():
-        return ALT_ENV_PATH
-    return DEFAULT_ENV_PATH
+    """The .env file to persist into — the same target `mobile-use init`
+    writes (setup_env.env_target_path), so wireless --persist and init can
+    never write two different files."""
+    from mobile_use.setup_env import env_target_path
+    return env_target_path()
 
 
 def _upsert_env_var(path, key, value):

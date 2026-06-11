@@ -208,9 +208,35 @@ def _prompt(label, *, default=""):
 
 # ---- serialize -------------------------------------------------------------
 
+# Keys `mobile-use init` owns. Everything else in an existing .env — wireless
+# persistence (IPH_WDA_URL), caps overrides (IPH_CAPS/ANH_CAPS), MU_* knobs,
+# hand-added keys — is NOT managed and must survive an init re-run verbatim.
+REQUIRED_IOS_KEYS = ("IPH_UDID", "IPH_XCODE_ORG_ID", "IPH_WDA_BUNDLE_ID")
+OPTIONAL_IOS_KEYS = ("IPH_PLATFORM_VERSION", "IPH_DEVICE_NAME", "IPH_APPIUM_URL",
+                     "IPH_NAME", "IPH_DOMAIN_SKILLS", "IPH_NEW_COMMAND_TIMEOUT")
+MANAGED_IOS_KEYS = REQUIRED_IOS_KEYS + OPTIONAL_IOS_KEYS
+REQUIRED_ANDROID_KEYS = ("ANH_UDID",)
+OPTIONAL_ANDROID_KEYS = ("ANH_PLATFORM_VERSION", "ANH_DEVICE_NAME", "ANH_APPIUM_URL",
+                         "ANH_NAME", "ANH_DOMAIN_SKILLS", "ANH_NEW_COMMAND_TIMEOUT")
+MANAGED_ANDROID_KEYS = REQUIRED_ANDROID_KEYS + OPTIONAL_ANDROID_KEYS
+REQUIRED_KEYS = REQUIRED_IOS_KEYS + REQUIRED_ANDROID_KEYS
+
+
+def env_target_path():
+    """The .env both `mobile-use init` and the wireless --persist writers
+    target. Repo root wins when both exist — that matches daemon load
+    precedence (repo/.env is loaded first; setdefault means its values win)."""
+    if DEFAULT_ENV_PATH.exists():
+        return DEFAULT_ENV_PATH
+    if ALT_ENV_PATH.exists():
+        return ALT_ENV_PATH
+    return DEFAULT_ENV_PATH
+
+
 def render_env(values, *, ios=True, android=True):
-    """Render the values back into a tidy .env body, preserving section
-    headers from .env.example."""
+    """Render the values into a tidy .env body, preserving section headers
+    from .env.example. Used for FRESH files only — existing files go through
+    merge_env_text so unmanaged keys survive."""
     out = ["# Generated / updated by `mobile-use init`", ""]
     if ios:
         out += [
@@ -218,11 +244,9 @@ def render_env(values, *, ios=True, android=True):
             "# iOS (iphone-harness)",
             "# ============================================================================",
         ]
-        for k in ("IPH_UDID", "IPH_XCODE_ORG_ID", "IPH_WDA_BUNDLE_ID"):
+        for k in REQUIRED_IOS_KEYS:
             out.append(f"{k}={values.get(k, '')}")
-        # Optional iOS keys
-        for k in ("IPH_PLATFORM_VERSION", "IPH_DEVICE_NAME", "IPH_APPIUM_URL",
-                  "IPH_NAME", "IPH_DOMAIN_SKILLS", "IPH_NEW_COMMAND_TIMEOUT"):
+        for k in OPTIONAL_IOS_KEYS:
             if k in values and values[k]:
                 out.append(f"{k}={values[k]}")
         out.append("")
@@ -231,20 +255,65 @@ def render_env(values, *, ios=True, android=True):
             "# ============================================================================",
             "# Android (android-harness)",
             "# ============================================================================",
-            f"ANH_UDID={values.get('ANH_UDID', '')}",
         ]
-        for k in ("ANH_PLATFORM_VERSION", "ANH_DEVICE_NAME", "ANH_APPIUM_URL",
-                  "ANH_NAME", "ANH_DOMAIN_SKILLS", "ANH_NEW_COMMAND_TIMEOUT"):
+        for k in REQUIRED_ANDROID_KEYS:
+            out.append(f"{k}={values.get(k, '')}")
+        for k in OPTIONAL_ANDROID_KEYS:
             if k in values and values[k]:
                 out.append(f"{k}={values[k]}")
         out.append("")
     return "\n".join(out)
 
 
+def _has_key_line(text, key):
+    return any(ln.lstrip().startswith(f"{key}=") for ln in text.splitlines())
+
+
+def _upsert_line(text, key, value):
+    """Replace the first `KEY=...` line in place; append if absent. Every
+    other line — comments, blank lines, unknown keys — passes through verbatim."""
+    lines = text.splitlines()
+    out, replaced = [], False
+    for ln in lines:
+        if not replaced and ln.lstrip().startswith(f"{key}="):
+            out.append(f"{key}={value}")
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        out.append(f"{key}={value}")
+    return "\n".join(out) + "\n"
+
+
+def merge_env_text(text, values, *, ios=True, android=True):
+    """Line-preserving merge into an existing .env: managed keys updated in
+    place (or appended), everything else kept verbatim. An init re-run must
+    never destroy wireless/persisted config it doesn't manage (IPH_WDA_URL,
+    IPH_CAPS, MU_*, hand-added keys)."""
+    managed = (MANAGED_IOS_KEYS if ios else ()) + (MANAGED_ANDROID_KEYS if android else ())
+    for k in managed:
+        v = values.get(k, "")
+        if v:
+            text = _upsert_line(text, k, v)
+        elif k in REQUIRED_KEYS and not _has_key_line(text, k):
+            text = _upsert_line(text, k, "")
+    return text
+
+
+def _merged_text(path, values, *, ios=True, android=True):
+    if path.exists():
+        return merge_env_text(path.read_text(encoding="utf-8"), values,
+                              ios=ios, android=android)
+    return render_env(values, ios=ios, android=android)
+
+
 def write_env(path, values, *, ios=True, android=True):
-    """Write the values to `path`. Creates parent dir if needed."""
+    """Write the values to `path`. Existing file → line-preserving merge;
+    missing file → full template render. Creates parent dir if needed."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_env(values, ios=ios, android=android), encoding="utf-8")
+    path.write_text(_merged_text(path, values, ios=ios, android=android),
+                    encoding="utf-8")
 
 
 # ---- CLI entry -------------------------------------------------------------
@@ -282,9 +351,7 @@ def main(argv=None):
         print("  - See SETUP.md → 'iOS from Windows / Linux' for the full walkthrough.")
         print()
 
-    target = Path(args.path).resolve() if args.path else (
-        ALT_ENV_PATH if ALT_ENV_PATH.exists() else DEFAULT_ENV_PATH
-    )
+    target = Path(args.path).resolve() if args.path else env_target_path()
     existing = parse_env(target)
     devices = detect_devices()
 
@@ -299,13 +366,11 @@ def main(argv=None):
     values = build_env(existing=existing, devices=devices,
                        ios=ios, android=android, yes=args.yes)
 
-    text = render_env(values, ios=ios, android=android)
-
     if args.print:
-        print(text)
+        print(_merged_text(target, values, ios=ios, android=android))
         return 0
 
-    target.write_text(text, encoding="utf-8")
+    write_env(target, values, ios=ios, android=android)
     print(f"\nWrote {target.relative_to(REPO_ROOT) if target.is_relative_to(REPO_ROOT) else target}")
     if not has_real_value(values, "IPH_UDID") and not has_real_value(values, "ANH_UDID"):
         print("Warning: no device UDIDs set. Re-run after connecting a phone, or edit .env manually.")
