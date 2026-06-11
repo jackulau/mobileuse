@@ -170,6 +170,70 @@ def adb_disconnect(ip, port=5555, timeout=10.0):
     return _run_adb(["disconnect", f"{ip}:{port}"], timeout=timeout)
 
 
+def adb_pair(host_port, code, timeout=20.0):
+    """``adb pair <host:port> <code>`` (Android 11+ Wireless debugging).
+
+    adb can exit 0 even on failure, so success is decided from the output
+    text. Returns ``(ok, detail)``.
+    """
+    ran, out = _run_adb(["pair", host_port, code], timeout=timeout)
+    if not ran:
+        return False, out
+    return "successfully paired" in out.lower(), out
+
+
+ANDROID_PAIR_HELP = """\
+mobile-use android pair <host:port> <pairing-code> — cable-free onboarding (Android 11+).
+
+USAGE:
+  mobile-use android pair 192.168.1.42:37123 123456
+
+WHERE THE NUMBERS COME FROM (on the phone):
+  Settings → Developer options → Wireless debugging → "Pair device with pairing code"
+  The dialog shows an ip:port AND a 6-digit code. The pairing port is random —
+  it is NOT 5555 and NOT the connect port.
+
+Pairing survives device reboots (plain `adb tcpip` reverts to USB on reboot).
+After pairing once, connect + remember the device:
+  mobile-use android wifi <ip>:<connect-port> --persist
+(the connect ip:port is on the main Wireless debugging screen).
+"""
+
+
+def android_pair_main(argv):
+    """`mobile-use android pair <host:port> <pairing-code>`."""
+    if not argv or argv[0] in {"-h", "--help"}:
+        print(ANDROID_PAIR_HELP)
+        return 0 if argv else 2
+
+    pos = [a for a in argv if not a.startswith("-")]
+    if len(pos) != 2:
+        print("usage: mobile-use android pair <host:port> <pairing-code>",
+              file=sys.stderr)
+        return 2
+    target, code = pos
+    if ":" not in target:
+        print(f"pairing needs the ip:PORT shown in the device's pairing dialog "
+              f"(got {target!r} — and note that port is NOT 5555)", file=sys.stderr)
+        return 2
+
+    ok, detail = adb_pair(target, code)
+    print(detail)
+    if not ok:
+        if "adb not found" in detail:
+            return 1
+        print("\nPairing failed. Checklist:\n"
+              "  - phone + this host on the SAME Wi-Fi network\n"
+              "  - the pairing dialog is still open (code + port expire when it closes)\n"
+              "  - the 6-digit code matches exactly", file=sys.stderr)
+        return 1
+    host = target.rsplit(":", 1)[0]
+    print(f"\nPaired. Now connect + remember the device:\n"
+          f"  mobile-use android wifi {host}:5555 --persist\n"
+          f"  (use the connect ip:port from the Wireless debugging screen if not 5555)")
+    return 0
+
+
 ANDROID_WIFI_HELP = """\
 mobile-use android wifi <ip[:port]> — drive an Android device over Wi-Fi (adb-over-TCP).
 

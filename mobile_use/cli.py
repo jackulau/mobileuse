@@ -509,12 +509,18 @@ def main():
                 "mobile-use android — Android-specific subcommands:\n\n"
                 "  wifi <ip[:port]>      Drive the device over Wi-Fi (adb tcpip + adb connect).\n"
                 "                        Prints the ip:port serial to set as ANH_UDID.\n"
+                "                        --persist saves it to .env + the remember-store.\n"
                 "                        Add --disconnect to drop the wireless connection.\n"
+                "  pair <ip:port> <code> Pair via Wireless debugging (Android 11+, no cable ever).\n"
+                "                        Pairing survives reboots; then `android wifi ... --persist`.\n"
             )
             sys.exit(0 if len(remaining) >= 2 else 2)
         if remaining[1] == "wifi":
             from . import devices as _devices
             sys.exit(_devices.android_wifi_main(remaining[2:]))
+        if remaining[1] == "pair":
+            from . import devices as _devices
+            sys.exit(_devices.android_pair_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use android` action: {remaining[1]!r}. Try `mobile-use android --help`.")
 
     # macro <subcmd> — record/replay action sequences (literal + smart)
