@@ -28,6 +28,7 @@ from ._platform import (
     LINUX_NODE_PKGS,
     is_linux,
     is_macos,
+    is_windows,
     linux_install_cmd,
 )
 
@@ -119,10 +120,13 @@ def _appium_driver_installed(name):
     fake = os.environ.get("MOBILE_USE_FAKE_APPIUM_DRIVERS")
     if fake is not None:
         return name in [d for d in fake.split(",") if d]
-    if not _have("appium"):
+    # Resolve the binary: on Windows appium is appium.cmd and CreateProcess
+    # won't find the bare name — shutil.which honors PATHEXT.
+    appium_bin = shutil.which("appium")
+    if not appium_bin:
         return False
     try:
-        out = subprocess.check_output(["appium", "driver", "list", "--installed"],
+        out = subprocess.check_output([appium_bin, "driver", "list", "--installed"],
                                       timeout=10.0, stderr=subprocess.STDOUT).decode()
         return name in out
     except Exception:
@@ -149,6 +153,7 @@ def plan(ios=True, android=True):
     """
     steps = []
     on_linux = is_linux()
+    on_windows = is_windows()
 
     if ios:
         steps.append(("Xcode (full app, not just Command Line Tools)",
@@ -169,16 +174,26 @@ def plan(ios=True, android=True):
                           lambda: _have("adb"),
                           _linux_adb_install_cmd(),
                           False))
+        elif on_windows:
+            steps.append(("Android Platform Tools (adb) — winget on Windows",
+                          lambda: _have("adb"),
+                          ["winget", "install", "--id", "Google.PlatformTools"],
+                          False))
         else:
             steps.append(("Android Platform Tools (adb) — Homebrew on macOS",
                           lambda: _brew_has("android-platform-tools") or _have("adb"),
                           ["brew", "install", "android-platform-tools"],
                           True))
-    # Node + npm — macOS via brew; Linux via apt/dnf/pacman.
+    # Node + npm — macOS via brew; Linux via apt/dnf/pacman; Windows via winget.
     if on_linux:
         steps.append(("Node.js + npm — Linux",
                       lambda: _have("node") and _have("npm"),
                       _linux_node_install_cmd(),
+                      False))
+    elif on_windows:
+        steps.append(("Node.js + npm — winget on Windows",
+                      lambda: _have("node") and _have("npm"),
+                      ["winget", "install", "--id", "OpenJS.NodeJS.LTS"],
                       False))
     else:
         steps.append(("Node.js + npm",
@@ -204,6 +219,17 @@ def plan(ios=True, android=True):
                   [sys.executable, "-m", "pip", "install", "-e", str(REPO_ROOT)],
                   False))
     return steps
+
+
+def _resolve_argv0(cmd):
+    """shutil.which the program name at execution time. On Windows npm/appium
+    are npm.cmd/appium.cmd — CreateProcess won't resolve the bare name, while
+    shutil.which honors PATHEXT. POSIX: which returns the same path execvp
+    would pick, so behavior is unchanged."""
+    if not cmd:
+        return cmd
+    resolved = shutil.which(cmd[0])
+    return [resolved or cmd[0], *cmd[1:]]
 
 
 def run(ios=True, android=True, dry_run=False):
@@ -268,7 +294,7 @@ def run(ios=True, android=True, dry_run=False):
 
         print(f"{prefix} {label}: installing... `{' '.join(cmd)}`")
         try:
-            subprocess.check_call(cmd)
+            subprocess.check_call(_resolve_argv0(cmd))
             # Re-check.
             if check():
                 print("   OK")

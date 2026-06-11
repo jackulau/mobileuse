@@ -292,6 +292,14 @@ LINUX_LIBIMOBILEDEVICE_PKGS = {
 }
 
 
+# winget package ids for doctor/bootstrap remediation on Windows. Keyed by the
+# (first word of the) brew package name callers already pass to install_hint.
+WINGET_IDS = {
+    "android-platform-tools": "Google.PlatformTools",
+    "node": "OpenJS.NodeJS.LTS",
+}
+
+
 _UNSET = object()
 
 
@@ -356,14 +364,20 @@ def install_hint(brew_pkg: str, pkgs_per_manager: dict) -> str:
     """One-line install command for the current host.
 
     On macOS → `brew install {brew_pkg}` (the original behavior).
+    On Windows → the winget command when the package has a known id.
     On Linux → the apt/dnf/pacman/zypper/apk command for the detected pkg
     manager, or a multi-line list of all five if the manager is unknown.
 
-    Used in doctor remediation messages so Linux users don't see
+    Used in doctor remediation messages so Linux/Windows users don't see
     `brew install …` they can't act on.
     """
     if is_macos():
         return f"brew install {brew_pkg}"
+    if is_windows():
+        wid = WINGET_IDS.get(brew_pkg.split()[0])
+        if wid:
+            return f"winget install --id {wid}"
+        return f"(install {brew_pkg} via winget or your package manager)"
     if not is_linux():
         return f"(install {brew_pkg} via your OS package manager)"
     pm = linux_pkg_manager()
