@@ -543,6 +543,18 @@ def main():
             sys.exit(_devices.android_pair_main(remaining[2:]))
         sys.exit(f"Unknown `mobile-use android` action: {remaining[1]!r}. Try `mobile-use android --help`.")
 
+    # mcp — serve the action surface to MCP clients over stdio.
+    if remaining and remaining[0] == "mcp":
+        from . import mcp_server
+        extra = []
+        if platform == "ios":
+            extra.append("--ios")
+        elif platform == "android":
+            extra.append("--android")
+        if instance_name:
+            extra += ["--name", instance_name]
+        sys.exit(mcp_server.main(extra + remaining[1:]))
+
     # macro <subcmd> — record/replay action sequences (literal + smart)
     if remaining and remaining[0] == "macro":
         from . import macro
