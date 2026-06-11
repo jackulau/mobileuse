@@ -25,10 +25,23 @@ Usage:
 import functools
 import hashlib
 import os
+import re
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _APPIUM_PORT_RANGE = (4724, 4799)
+
+
+def _store_entry_name(entry):
+    """Pool name for a wifi-store entry: serial / udid / wda_url host,
+    sanitized to the daemon-name alphabet ([A-Za-z0-9_-])."""
+    if entry.get("platform") == "android":
+        base = entry.get("serial") or "android"
+    else:
+        base = entry.get("udid") or entry.get("wda_url") or "ios"
+    base = re.sub(r"^https?://", "", str(base))
+    base = re.sub(r"[^A-Za-z0-9_-]+", "-", base).strip("-")[:64]
+    return base or "device"
 
 
 def _port_is_free(port, host="127.0.0.1"):
@@ -158,12 +171,16 @@ class DevicePool:
         self._devices = {}
 
     def add_ios(self, name, udid, xcode_org_id=None, wda_bundle_id=None,
-                appium_url=None, platform_version=None):
+                appium_url=None, platform_version=None, wda_url=None):
         """Add an iOS device to the pool.
 
         If `appium_url` is None, auto-allocate a per-name port in 4724-4799
         to avoid collisions when multiple named daemons run simultaneously.
         Pass `appium_url=` explicitly to override (e.g. remote Appium).
+
+        `wda_url` is the cable-free WebDriverAgent endpoint for THIS device —
+        it rides the per-name env overrides (IPH_WDA_URL), so several Wi-Fi
+        iPhones in one pool never share the one global key.
         """
         env = {"IPH_UDID": udid, "IPH_NAME": name}
         if xcode_org_id:
@@ -177,6 +194,8 @@ class DevicePool:
             env["IPH_APPIUM_URL"] = f"http://127.0.0.1:{port}"
         if platform_version:
             env["IPH_PLATFORM_VERSION"] = platform_version
+        if wda_url:
+            env["IPH_WDA_URL"] = wda_url
 
         dev = Device(name, "ios", env)
         self._devices[name] = dev
@@ -234,6 +253,47 @@ class DevicePool:
                 pool.add_ios(entry["name"], udid=entry["udid"], **ios_kwargs)
             else:
                 pool.add_android(entry["name"], udid=entry["udid"], **android_kwargs)
+        return pool
+
+    @classmethod
+    def from_remembered(cls, platform=None, **kwargs):
+        """Build a pool from the wireless remember-store (devices saved by
+        `--persist`).
+
+        android entries become add_android(udid=<serial>); ios entries become
+        add_ios(wda_url=<stored url>) — each daemon carries its own
+        IPH_WDA_URL via per-name env overrides, so several Wi-Fi iPhones
+        coexist. kwargs forward like from_connected (xcode_org_id /
+        wda_bundle_id / appium_url / platform_version).
+
+        Raises RuntimeError when the store has no matching entries.
+        """
+        from mobile_use.wifi_store import remembered_devices
+        entries = remembered_devices(platform)
+        if not entries:
+            raise RuntimeError(
+                "DevicePool.from_remembered(): no remembered wireless devices.\n"
+                "  android: mobile-use android wifi <ip> --persist\n"
+                "  ios:     mobile-use ios wifi --persist")
+
+        ios_kwargs = {k: v for k, v in kwargs.items()
+                      if k in ("xcode_org_id", "wda_bundle_id", "appium_url", "platform_version")}
+        android_kwargs = {k: v for k, v in kwargs.items()
+                          if k in ("appium_url", "platform_version")}
+
+        pool = cls()
+        for e in entries:
+            name = e.get("name") or _store_entry_name(e)
+            if name in pool:
+                i = 2
+                while f"{name}-{i}" in pool:
+                    i += 1
+                name = f"{name}-{i}"
+            if e.get("platform") == "ios":
+                pool.add_ios(name, udid=e.get("udid") or "",
+                             wda_url=e.get("wda_url"), **ios_kwargs)
+            else:
+                pool.add_android(name, udid=e.get("serial"), **android_kwargs)
         return pool
 
     def add_from_udid(self, udid, **kwargs):

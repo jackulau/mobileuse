@@ -267,3 +267,81 @@ def test_one_slow_device_does_not_block_others():
     elapsed = time.time() - start
     assert set(out.keys()) == {"fast1", "slow", "fast2"}
     assert elapsed < 0.6
+
+
+# ---- wireless iOS multi-device (wda_url) + from_remembered --------------------
+
+def test_add_ios_wda_url_rides_per_device_env():
+    pool = DevicePool()
+    d1 = pool.add_ios("ip1", udid="UDID-1", wda_url="http://192.168.1.50:8100")
+    d2 = pool.add_ios("ip2", udid="UDID-2", wda_url="http://192.168.1.51:8100")
+    assert d1._env["IPH_WDA_URL"] == "http://192.168.1.50:8100"
+    assert d2._env["IPH_WDA_URL"] == "http://192.168.1.51:8100"
+    # No cross-talk: each device's spawn env carries its own URL.
+    e1, e2 = d1._build_env(), d2._build_env()
+    assert e1["IPH_WDA_URL"] != e2["IPH_WDA_URL"]
+    assert e1["IPH_NAME"] == "ip1" and e2["IPH_NAME"] == "ip2"
+
+
+def test_add_ios_wda_url_none_keeps_current_behavior():
+    pool = DevicePool()
+    d = pool.add_ios("ip1", udid="UDID-1")
+    assert "IPH_WDA_URL" not in d._env
+
+
+def test_from_remembered_builds_pool_from_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    remember_device("android", serial="192.168.1.42:5555")
+    remember_device("android", serial="192.168.1.43:5557")
+    remember_device("ios", udid="00008140-AAA", wda_url="http://192.168.1.50:8100")
+
+    pool = DevicePool.from_remembered()
+    assert len(pool) == 3
+    assert len(pool.android_devices) == 2
+    assert len(pool.ios_devices) == 1
+    ios_dev = pool.ios_devices[0]
+    assert ios_dev._env["IPH_WDA_URL"] == "http://192.168.1.50:8100"
+    assert ios_dev._env["IPH_UDID"] == "00008140-AAA"
+    serials = {d._env["ANH_UDID"] for d in pool.android_devices}
+    assert serials == {"192.168.1.42:5555", "192.168.1.43:5557"}
+
+
+def test_from_remembered_empty_store_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    with pytest.raises(RuntimeError, match="--persist"):
+        DevicePool.from_remembered()
+
+
+def test_from_remembered_platform_filter(tmp_path, monkeypatch):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    remember_device("android", serial="192.168.1.42:5555")
+    remember_device("ios", wda_url="http://192.168.1.50:8100")
+    pool = DevicePool.from_remembered("android")
+    assert len(pool) == 1
+    assert pool.android_devices
+
+
+def test_from_remembered_propagates_ios_kwargs(tmp_path, monkeypatch):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    remember_device("ios", udid="00008140-AAA", wda_url="http://x:8100")
+    pool = DevicePool.from_remembered(xcode_org_id="TEAM123", wda_bundle_id="com.x.wda")
+    d = pool.ios_devices[0]
+    assert d._env["IPH_XCODE_ORG_ID"] == "TEAM123"
+    assert d._env["IPH_WDA_BUNDLE_ID"] == "com.x.wda"
+
+
+def test_from_remembered_names_sanitized_and_deduped(tmp_path, monkeypatch):
+    monkeypatch.setenv("MU_WIFI_STORE", str(tmp_path / "wifi.json"))
+    from mobile_use.wifi_store import remember_device
+    # Same host on two ports -> sanitized names collide at the host level only
+    # if ports are stripped; assert both exist and are valid daemon names.
+    remember_device("android", serial="192.168.1.42:5555")
+    remember_device("ios", wda_url="http://192.168.1.42:5555")  # same string, other platform
+    pool = DevicePool.from_remembered()
+    import re as _re
+    names = [d.name for d in pool.devices]
+    assert len(names) == len(set(names)) == 2
+    assert all(_re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in names)
