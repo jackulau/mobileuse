@@ -277,8 +277,9 @@ def _resolve_base_model(model):
     """Resolve a bare base-model filename to the committed repo-root copy if present.
 
     ultralytics treats a bare ``"yolov8n.pt"`` as relative-to-CWD and, when absent,
-    silently downloads it from the network. The repo ships ``yolov8n.pt`` at its root,
-    so prefer that local copy: offline training never triggers an implicit download.
+    silently downloads it from the network. When a copy exists at the repo root
+    (left there by a prior train/download — *.pt is gitignored), prefer it:
+    offline training then never triggers an implicit download.
     A path with a directory component, or one that already exists as given, is left
     untouched (caller knows where their weights are).
     """

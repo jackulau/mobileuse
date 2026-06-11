@@ -185,11 +185,14 @@ def test_train_reports_unverified_when_checkpoint_absent(tmp_path, monkeypatch):
     assert "reason" in res
 
 
-def test_resolve_base_model_prefers_committed_repo_copy():
-    # The repo ships yolov8n.pt at its root; a bare filename must resolve there so
-    # offline training never triggers an implicit ultralytics network download.
+def test_resolve_base_model_prefers_repo_root_copy(tmp_path, monkeypatch):
+    # A bare filename must resolve to the repo-root copy WHEN one is present
+    # (downloaded by a prior train — *.pt is gitignored, so a fresh clone has
+    # none), keeping offline training free of implicit ultralytics downloads.
+    (tmp_path / "yolov8n.pt").write_bytes(b"fake-weights")
+    monkeypatch.setattr(td, "_REPO_ROOT", tmp_path)
     resolved = td._resolve_base_model("yolov8n.pt")
-    assert resolved.endswith("yolov8n.pt")
+    assert resolved == str(tmp_path / "yolov8n.pt")
     assert os.path.isabs(resolved) and os.path.exists(resolved)
     # A path WITH a directory component is the caller's explicit choice — left untouched.
     assert td._resolve_base_model("some/dir/custom.pt") == "some/dir/custom.pt"
