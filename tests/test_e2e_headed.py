@@ -71,6 +71,66 @@ def _free_port():
         s.close()
 
 
+# Bounded-retry HTTP probes. A single wall-clock urlopen timeout against an
+# in-process ViewerServer flakes under heavy parallel load (e.g. the suite run
+# concurrently by many audit skeptics): the GIL-shared server transiently can't
+# answer within 2-3s, the client gives up, and the run goes red. These poll until
+# the expected state appears or a generous deadline passes — deterministic, no
+# fixed sleeps. (Lesson: never assert measured wall-clock in tests.)
+
+def _stream_frame(url, deadline=20.0, timeout=8.0):
+    """Return (content_type, first chunk) once an MJPEG frame appears."""
+    end = time.time() + deadline
+    last = None
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                ctype = r.headers.get("Content-Type", "")
+                chunk = r.read(8192)
+            if b"\xff\xd8" in chunk:
+                return ctype, chunk
+            last = "no JPEG in first chunk yet"
+        except Exception as e:
+            last = e
+        time.sleep(0.1)
+    raise AssertionError(f"stream {url} produced no frame within {deadline}s: {last}")
+
+
+def _get_json_until(url, pred, deadline=20.0, timeout=8.0):
+    """GET + parse JSON, retrying until pred(data) holds or the deadline passes."""
+    end = time.time() + deadline
+    last = None
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                data = json.loads(r.read())
+            if pred(data):
+                return data
+            last = data
+        except Exception as e:
+            last = e
+        time.sleep(0.1)
+    raise AssertionError(f"{url} predicate unmet within {deadline}s: {last}")
+
+
+def _get_bytes_until(url, pred, deadline=20.0, timeout=8.0):
+    """GET bytes, retrying until pred(status, headers, body) holds. Transient 503
+    (stream not ready yet) raises HTTPError and is retried."""
+    end = time.time() + deadline
+    last = None
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                status, headers, body = r.status, r.headers, r.read()
+            if pred(status, headers, body):
+                return status, headers, body
+            last = (status, len(body))
+        except Exception as e:
+            last = e
+        time.sleep(0.1)
+    raise AssertionError(f"{url} predicate unmet within {deadline}s: {last}")
+
+
 # ---- e2e_headed_ios -----------------------------------------------------
 
 def test_e2e_headed_ios(monkeypatch):
@@ -87,18 +147,13 @@ def test_e2e_headed_ios(monkeypatch):
     try:
         assert _wait_alive(ipc, name, timeout=5.0)
         with ViewerServer(platform="ios", fps=10) as v:
-            time.sleep(0.3)
-            with urllib.request.urlopen(v.url + "stream", timeout=3.0) as r:
-                ctype = r.headers["Content-Type"]
-                assert "multipart/x-mixed-replace" in ctype
-                chunk = r.read(8192)
-                # At least one JPEG frame in the multipart body.
-                assert b"\xff\xd8" in chunk
-                # Frame number embedded in MJPEG part header? No — but /healthz has it.
-            with urllib.request.urlopen(v.url + "healthz", timeout=2.0) as r:
-                data = json.loads(r.read())
-                assert data["platform"] == "ios"
-                assert data["running"] is True
+            # Bounded polls (not fixed sleeps / single-shot timeouts) so a
+            # load-starved in-process server can't flake the suite.
+            ctype, chunk = _stream_frame(v.url + "stream")
+            assert "multipart/x-mixed-replace" in ctype
+            assert b"\xff\xd8" in chunk  # at least one JPEG frame in the body
+            data = _get_json_until(v.url + "healthz", lambda d: d.get("running") is True)
+            assert data["platform"] == "ios"
     finally:
         try:
             s, tok = ipc.connect(name, timeout=1.0)
@@ -127,11 +182,10 @@ def test_e2e_headed_android(monkeypatch):
     try:
         assert _wait_alive(ipc, name, timeout=5.0)
         with ViewerServer(platform="android", fps=10) as v:
-            time.sleep(0.3)
-            with urllib.request.urlopen(v.url + "still", timeout=2.0) as r:
-                assert r.status == 200
-                assert r.headers.get_content_type() == "image/jpeg"
-                assert r.read()[:2] == b"\xff\xd8"
+            # /still returns 503 until the first frame lands — bounded poll past it.
+            status, headers, body = _get_bytes_until(
+                v.url + "still", lambda s, h, b: s == 200 and b[:2] == b"\xff\xd8")
+            assert headers.get_content_type() == "image/jpeg"
     finally:
         try:
             s, tok = ipc.connect(name, timeout=1.0)
