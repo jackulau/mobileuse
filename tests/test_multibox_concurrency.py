@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from android_harness import _ipc as anh_ipc
 from iphone_harness import _ipc as iph_ipc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -243,3 +244,136 @@ def test_threaded_pool_builds_unique_driver_caps(monkeypatch):
                    for n in names]
     assert len(set(sys_ports)) == len(names)
     assert len(set(mjpeg_ports)) == len(names)
+
+
+# ---- android parity: same by-name routing, separate harness module -----------
+#
+# The android helpers module (android_harness.helpers) mirrors the iOS one with
+# its own contextvar + per-name _conns cache. The iOS tests above prove the iPhone
+# path; these prove the android path isolates identically — a mixed pool of phones
+# must never cross-route Android-to-Android either. Two mock android daemons stand
+# in, each with a distinct pid + MOCK_WIDTH so a response maps to exactly one.
+
+def _spawn_mock_anh(name, width):
+    return subprocess.Popen(
+        [sys.executable, "-m", "tests._mock_android_daemon"],
+        env={**os.environ, "ANH_NAME": name, "MOCK_WIDTH": str(width)},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(REPO_ROOT),
+        start_new_session=True,
+    )
+
+
+def _wait_alive_anh(name, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if anh_ipc.ping(name, timeout=0.3):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@contextmanager
+def _mock_android_daemons(specs):
+    """specs: list of (name, width). Mirror of _mock_daemons for the android harness."""
+    from android_harness import helpers
+    procs = {}
+    pids = {}
+    try:
+        for name, width in specs:
+            procs[name] = _spawn_mock_anh(name, width)
+        for name, _ in specs:
+            assert _wait_alive_anh(name, timeout=5.0), f"mock android daemon {name} never came up"
+            pid = anh_ipc.identify(name, timeout=1.0)
+            assert isinstance(pid, int), f"no pid for {name}"
+            pids[name] = pid
+        assert len(set(pids.values())) == len(pids), f"pids collided: {pids}"
+        yield pids
+    finally:
+        for name, _ in specs:
+            try:
+                tok = helpers._use_name(name)
+                try:
+                    helpers._drop_conn()
+                finally:
+                    helpers._reset_name(tok)
+                helpers._conns.pop(name, None)
+            except Exception:
+                pass
+            try:
+                s, _ = anh_ipc.connect(name, timeout=1.0)
+                anh_ipc.request(s, None, {"meta": "shutdown"})
+                s.close()
+            except Exception:
+                pass
+        for name, p in procs.items():
+            try:
+                p.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=2.0)
+            for ext in ("sock", "pid", "log"):
+                try:
+                    (Path("/tmp") / f"anh-{name}.{ext}").unlink()
+                except FileNotFoundError:
+                    pass
+
+
+def test_concurrent_named_sends_route_to_own_daemon_android(monkeypatch):
+    """Android helpers layer: many threads, two bound names, zero cross-routing.
+    Mirror of the iOS test — proves the android contextvar/_conns path isolates too."""
+    from android_harness import admin, helpers
+    a = f"mbaa{uuid.uuid4().hex[:10]}"
+    b = f"mbab{uuid.uuid4().hex[:10]}"
+    monkeypatch.setattr(admin, "ensure_daemon", lambda *args, **kw: None)
+
+    with _mock_android_daemons([(a, 111), (b, 222)]) as pids:
+        leaks = []
+        seen = {a: set(), b: set()}
+        seen_lock = threading.Lock()
+
+        def worker(name):
+            for _ in range(30):
+                tok = helpers._use_name(name)
+                try:
+                    r = helpers._send({"meta": "ping"})
+                finally:
+                    helpers._reset_name(tok)
+                pid = r.get("pid") if isinstance(r, dict) else None
+                with seen_lock:
+                    seen[name].add(pid)
+                    if pid != pids[name]:
+                        leaks.append((name, pid, pids[name]))
+
+        threads = [threading.Thread(target=worker, args=(n,))
+                   for n in (a, b) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not leaks, f"cross-routed sends (name, got_pid, want_pid): {leaks[:5]}"
+        assert seen[a] == {pids[a]}, f"name {a} saw foreign pids: {seen[a]}"
+        assert seen[b] == {pids[b]}, f"name {b} saw foreign pids: {seen[b]}"
+
+
+def test_devicepool_broadcast_routes_each_android_device(monkeypatch):
+    """Android Device proxy end-to-end: DevicePool.broadcast routes each android
+    device to its own daemon. Distinct MOCK_WIDTH proves attribution; repeated to
+    stress the ThreadPoolExecutor for a routing race."""
+    from android_harness import admin
+    from mobile_use.multibox import DevicePool
+    a = f"mbap{uuid.uuid4().hex[:10]}"
+    b = f"mbaq{uuid.uuid4().hex[:10]}"
+    monkeypatch.setattr(admin, "ensure_daemon", lambda *args, **kw: None)
+
+    with _mock_android_daemons([(a, 111), (b, 222)]):
+        pool = DevicePool()
+        pool.add_android(a, udid="SER-A", appium_url="http://127.0.0.1:4723")
+        pool.add_android(b, udid="SER-B", appium_url="http://127.0.0.1:4723")
+
+        for _ in range(10):
+            out = pool.broadcast(lambda d: d.window_size(), max_workers=2)
+            assert out[a]["result"]["width"] == 111, f"device {a} mis-routed: {out[a]}"
+            assert out[b]["result"]["width"] == 222, f"device {b} mis-routed: {out[b]}"

@@ -11,6 +11,10 @@ from android_harness import _ipc as ipc
 NAME = os.environ.get("ANH_NAME", "default")
 LOG = str(ipc.log_path(NAME))
 PID = str(ipc.pid_path(NAME))
+# Routing identity for multibox tests: each daemon can report a distinct width so a
+# test can prove a Device reached THIS daemon and not a sibling. Default 1080 keeps
+# all existing single-daemon tests unchanged. (Mirrors tests/_mock_iphone_daemon.)
+WIDTH = int(os.environ.get("MOCK_WIDTH", "1080"))
 
 
 class MockDaemon:
@@ -56,7 +60,7 @@ class MockDaemon:
         if method == "screenshot":
             return {"result": {"path": "/tmp/anh-mock-shot.png", "bytes": 0}}
         if method == "window_size":
-            return {"result": {"width": 1080, "height": 1920}}
+            return {"result": {"width": WIDTH, "height": 1920}}
         if method == "page_source":
             return {"result": "<hierarchy><node class='android.widget.FrameLayout'/></hierarchy>"}
         if method == "click_element":
@@ -72,7 +76,7 @@ class MockDaemon:
                 "screenshot": {"path": "/tmp/anh-mock-shot.png", "bytes": 0},
                 "page_source": "<hierarchy><node class='android.widget.FrameLayout'/></hierarchy>",
                 "active_app": {"package": "com.android.launcher", "activity": ".Launcher"},
-                "window_size": {"width": 1080, "height": 1920},
+                "window_size": {"width": WIDTH, "height": 1920},
             }}
         if method == "get_orientation":
             return {"result": "PORTRAIT"}
