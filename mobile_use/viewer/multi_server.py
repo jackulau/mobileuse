@@ -223,6 +223,16 @@ def _make_handler(viewer):
         def log_message(self, fmt, *args):
             pass
 
+        def handle_one_request(self):
+            # Grid tiles each hold a browser connection that drops constantly
+            # (closed tab, navigated away, timed-out poll). Swallow the resulting
+            # BrokenPipe/ConnectionReset at this one chokepoint so a disconnect on
+            # any route never escapes into the server thread as a traceback.
+            try:
+                super().handle_one_request()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+
         def do_GET(self):
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):

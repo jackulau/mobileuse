@@ -194,6 +194,57 @@ def test_single_viewer_stream_degrades_when_daemon_down(monkeypatch):
     assert not errors, "single-viewer stream raised into the HTTP server thread (traceback spew)"
 
 
+def test_viewer_client_disconnect_does_not_spew(monkeypatch):
+    """do_GET disconnect guard: if a non-stream route raises BrokenPipe mid-write
+    (the client vanished — closed tab / timed-out poll), handle_one_request
+    swallows it instead of dumping a traceback into the server thread. Covers the
+    health/still/index paths that the _serve_stream guard alone does not."""
+    import socketserver
+
+    import iphone_harness.helpers as ih
+    from iphone_harness import _ipc as ipc
+    from mobile_use.viewer.server import ViewerServer
+
+    errors = []
+    monkeypatch.setattr(
+        socketserver.BaseServer, "handle_error",
+        lambda self, request, client_address: errors.append(True),
+    )
+
+    name = f"tst{uuid.uuid4().hex[:10]}"
+    monkeypatch.setenv("IPH_NAME", name)
+    monkeypatch.setattr(ih, "NAME", name)
+    p = _spawn_mock("iphone", name)
+    try:
+        assert _wait_alive(ipc, name, timeout=5.0)
+        v = ViewerServer(platform="ios")
+        v.start()
+        try:
+            # Simulate the client vanishing mid-write on a normal route.
+            def _boom(self):
+                raise BrokenPipeError("client went away")
+            monkeypatch.setattr(v._server.RequestHandlerClass, "_serve_health", _boom)
+            try:
+                urllib.request.urlopen(v.url + "healthz", timeout=3.0).read()
+            except Exception:
+                pass  # client side may see a reset — that's fine
+        finally:
+            v.stop()
+    finally:
+        try:
+            s, _ = ipc.connect(name, timeout=1.0)
+            ipc.request(s, None, {"meta": "shutdown"})
+            s.close()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            p.kill(); p.wait(timeout=2.0)
+        _cleanup("iphone", name)
+    assert not errors, "client disconnect (BrokenPipe) escaped into the HTTP server thread"
+
+
 # ---- HTTP routes ---------------------------------------------------------
 
 def test_viewer_mjpeg_index_served(iph_viewer):

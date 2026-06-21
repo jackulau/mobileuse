@@ -298,6 +298,17 @@ def _make_handler(helpers, platform, read_only=False):
         def log_message(self, fmt, *args):  # silence default access log
             pass
 
+        def handle_one_request(self):
+            # A live viewer's browser disconnects constantly (closed tab, navigated
+            # away, a poll that timed out). The default handler lets the resulting
+            # BrokenPipe/ConnectionReset from a mid-response write escape into the
+            # server thread as a traceback. Swallow them at this one chokepoint so
+            # every route (index/health/still/stream/control) degrades quietly.
+            try:
+                super().handle_one_request()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+
         def do_GET(self):
             if self.path in ("/", "/index.html"):
                 self._serve_index()
