@@ -169,16 +169,26 @@ def _default_wda_derived_data():
 def _build_options():
     """XCUITestOptions for the current device. Lazy import — appium is only needed in the daemon process."""
     from appium.options.ios import XCUITestOptions
-    if not UDID:
+    # Wireless attach (IPH_WDA_URL) points Appium at an already-running WDA, so a
+    # UDID is not required — cable-free pools remember devices by wda_url alone
+    # (wifi_store accepts wda_url as the sole iOS identity, and
+    # DevicePool.from_remembered then spawns the daemon with IPH_UDID=""). Require
+    # a UDID only for the USB path, where Appium must find + launch WDA on-device.
+    # Resolved here (call-time read, like IPH_CAPS) so it's runtime-overridable.
+    wda_url = os.environ.get("IPH_WDA_URL")
+    wireless = bool(wda_url and _valid_http_url(wda_url))
+    if not UDID and not wireless:
         raise RuntimeError(
             "IPH_UDID not set. Plug in the iPhone and either:\n"
             "  - export IPH_UDID=<udid>  (find via `idevice_id -l` or `xcrun xctrace list devices`)\n"
-            "  - put IPH_UDID=<udid> in <iphone-harness>/.env or <agent-workspace>/.env"
+            "  - put IPH_UDID=<udid> in <iphone-harness>/.env or <agent-workspace>/.env\n"
+            "  - or set IPH_WDA_URL=<http://device-ip:8100> to attach wirelessly without a UDID"
         )
     o = XCUITestOptions()
     o.platform_name = "iOS"
     o.device_name = DEVICE_NAME
-    o.udid = UDID
+    if UDID:
+        o.udid = UDID
     if PLATFORM_VERSION:
         o.platform_version = PLATFORM_VERSION
     if XCODE_ORG_ID:
@@ -203,10 +213,10 @@ def _build_options():
     # and launching WDA over USB. Appium treats appium:webDriverAgentUrl as "WDA is
     # up here, skip the build/launch phase". The device still needs WDA installed
     # + running (USB once), and on iOS 17+ a RemoteXPC tunnel must be up (see note).
-    # Read at call time (like IPH_CAPS) so it's runtime-overridable + testable.
-    wda_url = os.environ.get("IPH_WDA_URL")
+    # wda_url / wireless were resolved at the top of this function (call-time read,
+    # like IPH_CAPS, so it's runtime-overridable + testable).
     if wda_url:
-        if _valid_http_url(wda_url):
+        if wireless:
             o.set_capability("appium:webDriverAgentUrl", wda_url)
             log(f"wireless: attaching to WebDriverAgent at {wda_url} (appium:webDriverAgentUrl)")
             note = _ios_tunnel_note(PLATFORM_VERSION)
