@@ -101,6 +101,46 @@ def test_appium_port_wrapper_still_works():
     assert 4724 <= p <= 4799
 
 
+def test_user_pinned_port_is_claimed_so_sibling_avoids_it(monkeypatch):
+    """A user-pinned driver port (IPH_CAPS) must be claimed so a sibling device's
+    auto-allocation can never land on it — even the device whose sha256 hash
+    points exactly there gets routed away."""
+    import json
+
+    import mobile_use.multibox as mb
+    monkeypatch.setattr(mb, "_claimed_ports", set())
+    monkeypatch.setattr(mb, "_assigned", {})
+    monkeypatch.setattr(mb, "_port_is_free", lambda *a, **k: True)
+    alloc_name = "sibling-device"
+    low, high = _IOS_WDA_LOCAL_RANGE
+    span = high - low + 1
+    natural = low + (int(hashlib.sha256(alloc_name.encode()).hexdigest(), 16) % span)
+    # Some *other* device pins exactly `natural` via user caps.
+    monkeypatch.setenv("IPH_CAPS", json.dumps({"appium:wdaLocalPort": natural}))
+    mb._merged_caps_json("IPH_CAPS", {})
+    assert natural in mb._claimed_ports, "user-pinned port must be claimed"
+    monkeypatch.delenv("IPH_CAPS", raising=False)
+    chosen = mb._allocate_port(alloc_name, _IOS_WDA_LOCAL_RANGE)
+    assert chosen != natural, "auto-allocation must avoid the user-pinned port"
+
+
+def test_claim_tolerates_bare_key_and_ignores_nonport_caps(monkeypatch):
+    import json
+
+    import mobile_use.multibox as mb
+    monkeypatch.setattr(mb, "_claimed_ports", set())
+    monkeypatch.setattr(mb, "_assigned", {})
+    monkeypatch.setenv("ANH_CAPS", json.dumps({
+        "systemPort": 8250,                  # bare (no appium: prefix)
+        "appium:mjpegServerPort": 7820,      # prefixed
+        "appium:newCommandTimeout": 600,     # NOT a port — must not be claimed
+    }))
+    mb._merged_caps_json("ANH_CAPS", {})
+    assert 8250 in mb._claimed_ports
+    assert 7820 in mb._claimed_ports
+    assert 600 not in mb._claimed_ports, "non-port caps must not be claimed as ports"
+
+
 def test_port_is_free_basic():
     assert _port_is_free(0) is True
 

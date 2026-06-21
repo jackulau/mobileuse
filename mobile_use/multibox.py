@@ -101,9 +101,27 @@ def _allocate_appium_port(name, host="127.0.0.1"):
     return _allocate_port(name, _APPIUM_PORT_RANGE, host)
 
 
+# Driver-port cap keys that draw from the auto-allocation ranges. A user pinning
+# one of these in IPH_CAPS/ANH_CAPS must be registered as claimed, or a sibling
+# device's auto-allocation can silently hand out the same port (collision).
+_PORT_CAP_KEYS = frozenset({"wdaLocalPort", "systemPort", "mjpegServerPort"})
+
+
+def _claim_user_caps_ports(user):
+    """Register any user-pinned driver port (from IPH_CAPS/ANH_CAPS) as claimed so
+    the auto-allocator routes sibling devices around it. Tolerates the `appium:`
+    prefix or a bare key; ignores non-port caps and non-int values."""
+    with _alloc_lock:
+        for key, val in user.items():
+            short = key.split(":", 1)[-1]  # 'appium:wdaLocalPort' or bare 'wdaLocalPort'
+            if short in _PORT_CAP_KEYS and isinstance(val, int) and not isinstance(val, bool):
+                _claimed_ports.add(val)
+
+
 def _merged_caps_json(env_var, auto_caps):
     """Auto driver-port caps overlaid by the user's own IPH_CAPS/ANH_CAPS JSON
-    (user keys always win — same precedence the daemon applies)."""
+    (user keys always win — same precedence the daemon applies). A user-pinned
+    driver port is also claimed so sibling auto-allocation never collides."""
     user = {}
     raw = os.environ.get(env_var, "")
     if raw:
@@ -113,6 +131,7 @@ def _merged_caps_json(env_var, auto_caps):
                 user = parsed
         except ValueError:
             pass
+    _claim_user_caps_ports(user)
     return json.dumps({**auto_caps, **user})
 
 
