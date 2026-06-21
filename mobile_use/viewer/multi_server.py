@@ -17,12 +17,18 @@ import json
 import re
 import socket
 import socketserver
+import sys
 import threading
 import time
 
 from .named_client import NamedStreamClient
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _warn(msg):
+    """One concise operator line to stderr (no traceback). Viewer is stdlib-only."""
+    sys.stderr.write(f"[viewer] {msg}\n")
 
 
 def _free_port():
@@ -348,7 +354,17 @@ def _make_handler(viewer):
             last_no = -1
             try:
                 while True:
-                    r = client.frame()
+                    try:
+                        r = client.frame()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return  # client went away mid-fetch
+                    except Exception as e:
+                        # This device's daemon is down or mid-restart. Stop just
+                        # this tile cleanly — don't let the exception escape into
+                        # the HTTP server thread (traceback spew) or take down the
+                        # grid; other devices' streams keep serving.
+                        _warn(f"stream for {name!r} stopped: {e}")
+                        return
                     if r.get("ready") and r.get("frame_no", 0) != last_no:
                         last_no = r["frame_no"]
                         import base64 as _b64

@@ -158,6 +158,42 @@ def test_viewer_rejects_unknown_platform():
         ViewerServer(platform="windows-phone")
 
 
+def test_single_viewer_stream_degrades_when_daemon_down(monkeypatch):
+    """Single-device viewer: if screen_stream_frame() raises (daemon/Appium down),
+    the stream handler stops cleanly instead of dumping a traceback into the HTTP
+    server thread. No real daemon — the helpers module is stubbed to raise."""
+    import socketserver
+
+    import mobile_use.viewer.server as vs
+
+    class _DeadHelpers:
+        def screen_stream_start(self, **kw):
+            return {"running": True}
+
+        def screen_stream_frame(self):
+            raise RuntimeError("iphone-harness daemon didn't come up")
+
+        def screen_stream_stop(self):
+            return {"running": False}
+
+    monkeypatch.setattr(vs, "_load_helpers", lambda platform: _DeadHelpers())
+    errors = []
+    monkeypatch.setattr(
+        socketserver.BaseServer, "handle_error",
+        lambda self, request, client_address: errors.append(True),
+    )
+
+    v = vs.ViewerServer(platform="ios")
+    v.start()
+    try:
+        with urllib.request.urlopen(v.url + "stream", timeout=3.0) as r:
+            assert r.status == 200      # headers sent before the frame loop
+            r.read(2048)                # ends cleanly once the frame fetch fails
+    finally:
+        v.stop()
+    assert not errors, "single-viewer stream raised into the HTTP server thread (traceback spew)"
+
+
 # ---- HTTP routes ---------------------------------------------------------
 
 def test_viewer_mjpeg_index_served(iph_viewer):

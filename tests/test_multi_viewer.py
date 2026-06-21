@@ -77,6 +77,49 @@ def _fetch(url, timeout=2.0):
         return r.status, r.headers.get("Content-Type", ""), r.read()
 
 
+def _read_stream_head(url, nbytes=2048, timeout=3.0):
+    """Read at most nbytes from a (possibly endless) MJPEG stream, then close."""
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.status, r.read(nbytes)
+
+
+def test_stream_handler_degrades_when_frame_raises(monkeypatch):
+    """A device whose daemon is down (client.frame() raises) must NOT dump a
+    traceback into the HTTP server thread, and must not take the grid down — its
+    tile stops cleanly while sibling tiles keep streaming."""
+    import socketserver
+
+    errors = []
+    monkeypatch.setattr(
+        socketserver.BaseServer, "handle_error",
+        lambda self, request, client_address: errors.append(True),
+    )
+
+    class _RaisingClient(_FakeClient):
+        def frame(self):
+            raise RuntimeError("iphone-harness daemon didn't come up")
+
+    def factory(platform, name, fps, quality, max_dim):
+        cls = _RaisingClient if name == "dead" else _FakeClient
+        return cls(platform, name, fps, quality, max_dim)
+
+    s = _start_viewer([("ios", "dead"), ("ios", "alive")], client_factory=factory)
+    try:
+        # Dead tile: 200 header sent, then the stream ends cleanly (no hang).
+        status, _ = _read_stream_head(s.url + "stream/dead")
+        assert status == 200
+        # Sibling tile still streams a real multipart frame.
+        astatus, abody = _read_stream_head(s.url + "stream/alive")
+        assert astatus == 200
+        assert b"--mobile-use-frame" in abody
+        # Server thread is alive — health endpoint still answers.
+        hstatus, _, _ = _fetch(s.url + "healthz")
+        assert hstatus == 200
+    finally:
+        s.stop()
+    assert not errors, "stream handler raised into the HTTP server thread (traceback spew)"
+
+
 # ---- construction validation ---------------------------------------------
 
 def test_rejects_empty_devices():

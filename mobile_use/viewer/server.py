@@ -19,9 +19,15 @@ import http.server
 import json
 import socket
 import socketserver
+import sys
 import threading
 import time
 from pathlib import Path
+
+
+def _warn(msg):
+    """One concise operator line to stderr (no traceback). Viewer is stdlib-only."""
+    sys.stderr.write(f"[viewer] {msg}\n")
 
 _INDEX_HTML = b"""<!doctype html>
 <html lang=en>
@@ -382,7 +388,16 @@ def _make_handler(helpers, platform, read_only=False):
             last_no = -1
             try:
                 while True:
-                    r = helpers.screen_stream_frame()
+                    try:
+                        r = helpers.screen_stream_frame()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return  # client went away mid-fetch
+                    except Exception as e:
+                        # Daemon/Appium down or mid-restart. Don't let it escape
+                        # into the HTTP server thread (that dumps a full traceback);
+                        # stop this stream cleanly so the page can retry the <img>.
+                        _warn(f"{platform} stream stopped: {e}")
+                        return
                     if r.get("ready") and r.get("frame_no", 0) != last_no:
                         last_no = r["frame_no"]
                         jpeg = base64.b64decode(r["jpeg_b64"])
