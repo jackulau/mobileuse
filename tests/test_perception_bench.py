@@ -3,8 +3,9 @@
 Proves the cache makes repeated-screen runs natively faster (fewer LLM calls,
 less wall time), and that the local matcher recovers marks on a tree-less screen.
 """
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from mobile_use.perception_cache import measured_benchmark, synthetic_benchmark
 from tests.test_agent_run import _loop

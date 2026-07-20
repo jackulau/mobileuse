@@ -4,8 +4,9 @@ cv2 is present in this dev/CI image, so the matching path is exercised directly.
 The unavailable path is simulated by stubbing the cv2 import — proving the clean
 no-op contract for installs without the [detection] extra.
 """
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 import mobile_use.local_detector as ld
 from mobile_use.local_detector import LocalElementMatcher, available
