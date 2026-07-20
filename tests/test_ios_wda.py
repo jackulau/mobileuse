@@ -220,12 +220,49 @@ def test_build_main_already_built_returns_0(monkeypatch, capsys):
 
 
 def test_build_main_refuses_when_unsigned(monkeypatch, capsys):
+    # No team ID configured → can't auto-provision → hard refuse (point at sign-wda).
+    monkeypatch.delenv("IPH_XCODE_ORG_ID", raising=False)
     monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (False, "missing"))
     monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("not_signed", "no profile"))
     rc = ios_wda.build_main([])
     assert rc == 1
     out = capsys.readouterr().out
     assert "sign-wda" in out
+
+
+def test_build_main_attempts_build_when_unsigned_with_team(monkeypatch, capsys):
+    # With a team ID set, an unsigned WDA is NOT a hard blocker: -allowProvisioningUpdates
+    # can create the profile, so build-wda must attempt the build (chicken-and-egg fix).
+    monkeypatch.setenv("IPH_XCODE_ORG_ID", "TEAM123456")
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (False, "missing"))
+    monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("not_signed", "no profile"))
+    called = {}
+
+    def fake_build(udid=None, timeout=600):
+        called["udid"] = udid
+        return 0, "BUILD SUCCEEDED"
+
+    monkeypatch.setattr(ios_wda, "build_wda", fake_build)
+    rc = ios_wda.build_main([])
+    assert "udid" in called            # build was attempted, not refused
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "automatic provisioning" in out
+
+
+def test_build_main_hints_reauth_on_no_account_error(monkeypatch, capsys):
+    # The exact xcodebuild failure for an expired Apple ID session must surface a
+    # targeted re-auth hint, not just the generic fixes list.
+    monkeypatch.setenv("IPH_XCODE_ORG_ID", "TEAM123456")
+    monkeypatch.setattr(ios_wda, "check_wda_built", lambda: (False, "missing"))
+    monkeypatch.setattr(ios_wda, "check_wda_signing", lambda: ("not_signed", "no profile"))
+    monkeypatch.setattr(
+        ios_wda, "build_wda",
+        lambda udid=None, timeout=600: (70, 'error: No Account for Team "66MVL6C9WV".'))
+    rc = ios_wda.build_main([])
+    assert rc == 70
+    out = capsys.readouterr().out
+    assert "Apple ID session expired" in out
 
 
 def test_build_wda_returns_error_when_project_missing(monkeypatch):

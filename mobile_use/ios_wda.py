@@ -261,10 +261,18 @@ def build_main(argv):
         return 0
 
     sign_state, sign_detail = check_wda_signing()
+    team = os.environ.get("IPH_XCODE_ORG_ID", "").strip()
     if sign_state != "signed":
-        print(f"\nWDA is not signed ({sign_state}: {sign_detail}).")
-        print("Run `mobile-use ios sign-wda` first, then re-run this command.")
-        return 1
+        # A missing profile is only a hard blocker when we can't auto-provision.
+        # With a team ID set, `xcodebuild -allowProvisioningUpdates` creates the
+        # profile itself, so attempt the build rather than refusing — otherwise
+        # it's a chicken-and-egg: build-wda is the step that generates the profile.
+        if not team:
+            print(f"\nWDA is not signed ({sign_state}: {sign_detail}).")
+            print("Run `mobile-use ios sign-wda` first, then re-run this command.")
+            return 1
+        print(f"\nWDA not signed ({sign_state}), but IPH_XCODE_ORG_ID={team} is set — "
+              "building with automatic provisioning (-allowProvisioningUpdates)...")
 
     udid = udid or os.environ.get("IPH_UDID", "").strip() or None
     target = f"device {udid}" if udid else "generic iOS"
@@ -280,8 +288,19 @@ def build_main(argv):
     print(f"\nBuild FAILED (rc={rc}). Last 40 lines of xcodebuild output:")
     for line in output.splitlines()[-40:]:
         print(f"  {line}")
+    # xcodebuild reports "No Account for Team" / "valid credentials" when the
+    # Apple ID session behind an installed cert has expired — the profile can't
+    # be auto-created until the account is re-authenticated. Call that out first.
+    hint = ""
+    if "No Account for Team" in output or "valid credentials" in output:
+        hint = (
+            "  - Apple ID session expired → Xcode → Settings → Accounts →\n"
+            "    re-sign in to the Apple ID owning this team (password + 2FA),\n"
+            "    then re-run. `-allowProvisioningUpdates` needs a live account session.\n"
+        )
     print(
         "\nCommon fixes:\n"
+        + hint +
         "  - Bundle ID collision → change IPH_WDA_BUNDLE_ID (see SETUP.md A4)\n"
         "  - Provisioning failed → re-open Xcode, retry sign-wda\n"
         "  - Code-signing identity missing → Xcode → Settings → Accounts → add Apple ID\n"
