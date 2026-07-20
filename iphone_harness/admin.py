@@ -350,7 +350,16 @@ def _check_device():
         out = subprocess.check_output(["idevice_id", "-l"], timeout=5.0).decode().strip().splitlines()
         if udid in out:
             return True, f"paired ({udid})"
-        return False, f"udid {udid} not in `idevice_id -l`: {out!r}"
+        if not out:
+            # No devices on USB at all. When this device WAS paired, the usual cause
+            # of a "worked a second ago, now gone" flap is the phone locking (iOS cuts
+            # the USB data channel in USB-restricted mode) or sleeping/unplugged.
+            return False, (f"udid {udid} not visible: no devices on USB. Unlock the iPhone "
+                           "and keep it awake (Settings > Display & Brightness > Auto-Lock > "
+                           "Never) so it doesn't drop into USB-restricted mode; reseat the cable.")
+        # A different device is on USB -> wrong UDID or the wrong phone is plugged in.
+        return False, (f"udid {udid} not in `idevice_id -l` (saw {out!r}): check IPH_UDID, "
+                       "or another iPhone is connected.")
     except FileNotFoundError:
         hint = install_hint("libimobiledevice", LINUX_LIBIMOBILEDEVICE_PKGS)
         return False, f"`idevice_id` not installed ({hint})"

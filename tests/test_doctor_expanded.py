@@ -130,6 +130,37 @@ def test_ios_check_battery_returns_tuple():
     assert isinstance(res, tuple) and len(res) == 2
 
 
+def test_ios_check_device_empty_usb_hints_auto_lock(monkeypatch):
+    # No devices on USB: the message must point at the phone locking / USB-restricted
+    # mode (the common "worked a second ago, now gone" flap), not a bare list dump.
+    from iphone_harness import admin
+    monkeypatch.setenv("IPH_UDID", "ABC123")
+    monkeypatch.setattr(admin.subprocess, "check_output", lambda *a, **k: b"")
+    ok, msg = admin._check_device()
+    assert ok is False
+    assert ("Auto-Lock" in msg) or ("USB-restricted" in msg)
+
+
+def test_ios_check_device_other_device_hints_udid(monkeypatch):
+    # A different device is on USB -> point at IPH_UDID / wrong phone, NOT auto-lock.
+    from iphone_harness import admin
+    monkeypatch.setenv("IPH_UDID", "ABC123")
+    monkeypatch.setattr(admin.subprocess, "check_output", lambda *a, **k: b"OTHERUDID\n")
+    ok, msg = admin._check_device()
+    assert ok is False
+    assert "IPH_UDID" in msg
+    assert "Auto-Lock" not in msg
+
+
+def test_ios_check_device_present_is_ok(monkeypatch):
+    from iphone_harness import admin
+    monkeypatch.setenv("IPH_UDID", "ABC123")
+    monkeypatch.setattr(admin.subprocess, "check_output", lambda *a, **k: b"ABC123\n")
+    ok, msg = admin._check_device()
+    assert ok is True
+    assert "paired" in msg
+
+
 def test_android_check_battery_returns_tuple():
     from android_harness.admin import _check_battery
     res = _check_battery()
